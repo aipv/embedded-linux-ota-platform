@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo "Please run:"
+    echo "  source setup-environment"
+    return 1 2>/dev/null || exit 1
+fi
+
+export PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+source "${PROJECT_ROOT}/config/platform.conf"
+
+export PATH="${PROJECT_ROOT}/scripts:${PATH}"
+export TEMPLATECONF="${PROJECT_ROOT}/meta-ota-platform/conf/templates/default"
+export BB_ENV_PASSTHROUGH_ADDITIONS="${BB_ENV_PASSTHROUGH_ADDITIONS:-} IMAGE_VERSION BUILD_ID"
+export OTA_PLATFORM_ENV=1
+
+echo "Embedded Linux OTA Platform"
+echo "Machine : ${YOCTO_MACHINE}"
+echo "Image   : ${YOCTO_IMAGE}"
+echo "Version : ${IMAGE_VERSION}"
+
+source "${PROJECT_ROOT}/poky/oe-init-build-env" "${YOCTO_BUILD_DIR}"
