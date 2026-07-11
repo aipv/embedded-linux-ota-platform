@@ -20,4 +20,4 @@ echo "Machine : ${YOCTO_MACHINE}"
 echo "Image   : ${YOCTO_IMAGE}"
 echo "Version : ${IMAGE_VERSION}"
 
-source "${PROJECT_ROOT}/poky/oe-init-build-env" "${YOCTO_BUILD_DIR}"
+source "${PROJECT_ROOT}/ext/poky/oe-init-build-env" "${YOCTO_BUILD_DIR}"

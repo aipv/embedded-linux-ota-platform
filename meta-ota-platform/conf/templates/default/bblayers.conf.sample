@@ -1,1 +1,17 @@
-# bblayers.conf.sample
+# POKY_BBLAYERS_CONF_VERSION is increased each time build/conf/bblayers.conf
+# changes incompatibly
+POKY_BBLAYERS_CONF_VERSION = "2"
+
+BBPATH = "${TOPDIR}"
+BBFILES ?= ""
+
+BBLAYERS ?= " \
+  ${TOPDIR}/../ext/poky/meta \
+  ${TOPDIR}/../ext/poky/meta-poky \
+  ${TOPDIR}/../ext/poky/meta-yocto-bsp \
+  ${TOPDIR}/../ext/meta-openembedded/meta-oe \
+  ${TOPDIR}/../ext/meta-raspberrypi \
+  ${TOPDIR}/../ext/meta-mender/meta-mender-core \
+  ${TOPDIR}/../ext/meta-mender-community/meta-mender-raspberrypi \
+  ${TOPDIR}/../meta-ota-platform \
+"

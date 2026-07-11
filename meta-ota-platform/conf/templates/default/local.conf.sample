@@ -1,1 +1,29 @@
-# local.conf.sample
+#
+# Local configuration for the Yocto Raspberry Pi Mender Demo
+#
+
+# Target machine
+MACHINE ??= "raspberrypi3-64"
+
+# Distribution
+DISTRO ?= "poky"
+
+# Shared download and sstate cache
+DL_DIR ?= "${TOPDIR}/downloads"
+SSTATE_DIR ?= "${TOPDIR}/sstate-cache"
+
+# Build options
+USER_CLASSES ?= "buildstats"
+PATCHRESOLVE = "noop"
+
+# Enable Raspberry Pi support
+require conf/features/raspberrypi.inc
+
+# Enable Mender OTA support
+require conf/features/mender.inc
+
+# Enable Image Release support
+require conf/image.conf
+
+# Configuration version
+CONF_VERSION = "2"
