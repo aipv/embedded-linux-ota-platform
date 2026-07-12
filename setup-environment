@@ -1,23 +1,397 @@
 #!/usr/bin/env bash
+#
+# Embedded Linux OTA Platform environment setup
+#
+# Usage:
+#   source setup-environment
+#
+
+# ---------------------------------------------------------------------------
+# Check whether this script is sourced
+# ---------------------------------------------------------------------------
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    echo "Please run:"
-    echo "  source setup-environment"
-    return 1 2>/dev/null || exit 1
+    echo "Error: setup-environment must be sourced, not executed." >&2
+    echo "Usage: source setup-environment" >&2
+    exit 1
 fi
 
-export PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-source "${PROJECT_ROOT}/config/platform.conf"
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
 
-export PATH="${PROJECT_ROOT}/scripts:${PATH}"
-export TEMPLATECONF="${PROJECT_ROOT}/meta-ota-platform/conf/templates/default"
-export BB_ENV_PASSTHROUGH_ADDITIONS="${BB_ENV_PASSTHROUGH_ADDITIONS:-} IMAGE_VERSION BUILD_ID"
-export OTA_PLATFORM_ENV=1
+_setup_error()
+{
+    echo "Error: $*" >&2
+    return 1
+}
 
-echo "Embedded Linux OTA Platform"
-echo "Machine : ${YOCTO_MACHINE}"
-echo "Image   : ${YOCTO_IMAGE}"
-echo "Version : ${IMAGE_VERSION}"
+_setup_warning()
+{
+    echo "Warning: $*" >&2
+}
 
-source "${PROJECT_ROOT}/ext/poky/oe-init-build-env" "${YOCTO_BUILD_DIR}"
+_require_variable()
+{
+    local variable_name="$1"
+
+    if [[ -z "${!variable_name:-}" ]]; then
+        _setup_error "${variable_name} is not defined or is empty"
+        return 1
+    fi
+}
+
+# Escape a shell value before writing it into BitBake metadata.
+_bitbake_escape()
+{
+    local value="$1"
+
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+
+    printf '%s' "${value}"
+}
+
+_print_environment_variable()
+{
+    local variable_name="$1"
+    local variable_value="${!variable_name:-}"
+
+    printf "  %-28s %s\n" "${variable_name}:" "${variable_value}"
+}
+
+
+# ---------------------------------------------------------------------------
+# Determine project paths
+# ---------------------------------------------------------------------------
+
+_SETUP_ENV_PATH="${BASH_SOURCE[0]}"
+
+while [[ -L "${_SETUP_ENV_PATH}" ]]; do
+    _SETUP_ENV_DIR="$(cd -P "$(dirname "${_SETUP_ENV_PATH}")" >/dev/null 2>&1 && pwd)"
+    _SETUP_ENV_PATH="$(readlink "${_SETUP_ENV_PATH}")"
+
+    if [[ "${_SETUP_ENV_PATH}" != /* ]]; then
+        _SETUP_ENV_PATH="${_SETUP_ENV_DIR}/${_SETUP_ENV_PATH}"
+    fi
+done
+
+PROJECT_ROOT="$(
+    cd -P "$(dirname "${_SETUP_ENV_PATH}")" >/dev/null 2>&1 &&
+    pwd
+)"
+
+export PROJECT_ROOT
+
+PROJECT_CONFIG="${PROJECT_ROOT}/project.conf"
+SECRETS_CONFIG="${PROJECT_ROOT}/certificates/secrets.conf"
+YOCTO_INIT_SCRIPT="${PROJECT_ROOT}/ext/poky/oe-init-build-env"
+YOCTO_TEMPLATE_DIR="${PROJECT_ROOT}/meta-ota-platform/conf/templates/default"
+
+
+# ---------------------------------------------------------------------------
+# Load project configuration
+# ---------------------------------------------------------------------------
+
+if [[ ! -f "${PROJECT_CONFIG}" ]]; then
+    _setup_error "Project configuration not found: ${PROJECT_CONFIG}"
+    return 1
+fi
+
+# shellcheck source=/dev/null
+source "${PROJECT_CONFIG}" || {
+    _setup_error "Failed to source ${PROJECT_CONFIG}"
+    return 1
+}
+
+
+# ---------------------------------------------------------------------------
+# Load optional local secrets
+# ---------------------------------------------------------------------------
+
+if [[ -f "${SECRETS_CONFIG}" ]]; then
+    # shellcheck source=/dev/null
+    source "${SECRETS_CONFIG}" || {
+        _setup_error "Failed to source ${SECRETS_CONFIG}"
+        return 1
+    }
+else
+    _setup_warning "Optional secrets file not found: ${SECRETS_CONFIG}"
+fi
+
+
+# ---------------------------------------------------------------------------
+# Validate required configuration
+# ---------------------------------------------------------------------------
+
+for variable_name in \
+    PROJECT_NAME \
+    YOCTO_BUILD_DIR \
+    YOCTO_MACHINE \
+    YOCTO_IMAGE \
+    IMAGE_RELEASE \
+    MENDER_SERVER_URL
+do
+    _require_variable "${variable_name}" || return 1
+done
+
+if [[ ! -f "${YOCTO_INIT_SCRIPT}" ]]; then
+    _setup_error "Yocto initialization script not found: ${YOCTO_INIT_SCRIPT}"
+    return 1
+fi
+
+if [[ ! -d "${YOCTO_TEMPLATE_DIR}" ]]; then
+    _setup_error "Yocto configuration template not found: ${YOCTO_TEMPLATE_DIR}"
+    return 1
+fi
+
+if [[ ! -f "${YOCTO_TEMPLATE_DIR}/local.conf.sample" ]]; then
+    _setup_error \
+        "local.conf.sample not found: ${YOCTO_TEMPLATE_DIR}/local.conf.sample"
+    return 1
+fi
+
+if [[ ! -f "${YOCTO_TEMPLATE_DIR}/bblayers.conf.sample" ]]; then
+    _setup_error \
+        "bblayers.conf.sample not found: ${YOCTO_TEMPLATE_DIR}/bblayers.conf.sample"
+    return 1
+fi
+
+
+# ---------------------------------------------------------------------------
+# Generate runtime values
+# ---------------------------------------------------------------------------
+
+if [[ -z "${IMAGE_BUILD_ID:-}" ]]; then
+    IMAGE_BUILD_ID="$(date -u +%Y%m%d%H%M%S)"
+fi
+
+MENDER_ARTIFACT_NAME="${PROJECT_NAME}-${IMAGE_RELEASE}-${IMAGE_BUILD_ID}"
+
+MENDER_SERVER_HOST="$(
+    printf '%s' "${MENDER_SERVER_URL}" |
+        sed -E \
+            -e 's#^[[:alpha:]][[:alnum:]+.-]*://##' \
+            -e 's#/.*$##' \
+            -e 's#:[0-9]+$##'
+)"
+
+if [[ -z "${MENDER_SERVER_HOST}" ]]; then
+    _setup_error \
+        "Unable to determine server hostname from ${MENDER_SERVER_URL}"
+    return 1
+fi
+
+if [[ "${YOCTO_BUILD_DIR}" == /* ]]; then
+    YOCTO_BUILD_PATH="${YOCTO_BUILD_DIR}"
+else
+    YOCTO_BUILD_PATH="${PROJECT_ROOT}/${YOCTO_BUILD_DIR}"
+fi
+
+if [[ -n "${MENDER_SERVER_CRT:-}" ]]; then
+    if [[ "${MENDER_SERVER_CRT}" == /* ]]; then
+        MENDER_SERVER_CRT_PATH="${MENDER_SERVER_CRT}"
+    else
+        MENDER_SERVER_CRT_PATH="${PROJECT_ROOT}/${MENDER_SERVER_CRT}"
+    fi
+
+    if [[ ! -f "${MENDER_SERVER_CRT_PATH}" ]]; then
+        _setup_warning \
+            "Mender server certificate not found: ${MENDER_SERVER_CRT_PATH}"
+    fi
+else
+    MENDER_SERVER_CRT_PATH=""
+fi
+
+
+# ---------------------------------------------------------------------------
+# Export shell environment
+# ---------------------------------------------------------------------------
+
+export PROJECT_NAME
+export YOCTO_BUILD_DIR
+export YOCTO_BUILD_PATH
+export YOCTO_MACHINE
+export YOCTO_IMAGE
+
+export IMAGE_RELEASE
+export IMAGE_BUILD_ID
+
+export MENDER_ARTIFACT_NAME
+export MENDER_SERVER_URL
+export MENDER_SERVER_HOST
+export MENDER_SERVER_HOST_IP
+export MENDER_SERVER_CRT
+export MENDER_SERVER_CRT_PATH
+
+export DEVICE_SSH_USER
+export DEVICE_IP_ADDRESS
+export DEVICE_MENDER_ID
+
+# These variables may be provided by certificates/secrets.conf.
+export MENDER_TENANT_TOKEN
+export MENDER_ACCESS_TOKEN
+
+
+# ---------------------------------------------------------------------------
+# Initialize the Yocto build environment
+# ---------------------------------------------------------------------------
+
+export TEMPLATECONF="${YOCTO_TEMPLATE_DIR}"
+
+cd "${PROJECT_ROOT}" || {
+    _setup_error "Unable to enter project directory: ${PROJECT_ROOT}"
+    return 1
+}
+
+# oe-init-build-env changes the current working directory to the build directory.
+# shellcheck source=/dev/null
+source "${YOCTO_INIT_SCRIPT}" "${YOCTO_BUILD_PATH}" || {
+    _setup_error "Failed to initialize the Yocto build environment"
+    return 1
+}
+
+if [[ -z "${BUILDDIR:-}" ]]; then
+    _setup_error "oe-init-build-env did not define BUILDDIR"
+    return 1
+fi
+
+
+# ---------------------------------------------------------------------------
+# Generate build/conf/project.inc
+# ---------------------------------------------------------------------------
+
+PROJECT_INC="${BUILDDIR}/conf/project.inc"
+
+mkdir -p "$(dirname "${PROJECT_INC}")" || {
+    _setup_error "Unable to create directory for ${PROJECT_INC}"
+    return 1
+}
+
+cat >"${PROJECT_INC}" <<EOF
+# ---------------------------------------------------------------------------
+# Automatically generated by setup.env
+#
+# Do not edit this file manually.
+# Source configuration:
+#   ${PROJECT_CONFIG}
+# ---------------------------------------------------------------------------
+
+# Project
+PROJECT_ROOT = "$(_bitbake_escape "${PROJECT_ROOT}")"
+PROJECT_NAME = "$(_bitbake_escape "${PROJECT_NAME}")"
+
+# Build target
+MACHINE = "$(_bitbake_escape "${YOCTO_MACHINE}")"
+YOCTO_IMAGE = "$(_bitbake_escape "${YOCTO_IMAGE}")"
+
+# Image version
+IMAGE_RELEASE = "$(_bitbake_escape "${IMAGE_RELEASE}")"
+IMAGE_BUILD_ID = "$(_bitbake_escape "${IMAGE_BUILD_ID}")"
+
+# Mender Artifact
+MENDER_ARTIFACT_NAME = "$(_bitbake_escape "${MENDER_ARTIFACT_NAME}")"
+MENDER_DEVICE_TYPE ?= "\${MACHINE}"
+
+# Mender server
+MENDER_SERVER_URL = "$(_bitbake_escape "${MENDER_SERVER_URL}")"
+PROJECT_MENDER_SERVER_HOST = "$(_bitbake_escape "${MENDER_SERVER_HOST}")"
+PROJECT_MENDER_SERVER_HOST_IP = "$(_bitbake_escape "${MENDER_SERVER_HOST_IP:-}")"
+PROJECT_MENDER_SERVER_CRT = "$(_bitbake_escape "${MENDER_SERVER_CRT_PATH}")"
+EOF
+
+# The tenant token is required by the device, but the Management API access
+# token must remain a host-side shell variable and must not enter the image.
+if [[ -n "${MENDER_TENANT_TOKEN:-}" ]]; then
+    cat >>"${PROJECT_INC}" <<EOF
+
+# Hosted Mender tenant
+MENDER_TENANT_TOKEN = "$(_bitbake_escape "${MENDER_TENANT_TOKEN}")"
+EOF
+fi
+
+
+# ---------------------------------------------------------------------------
+# Verify local.conf includes project.inc
+# ---------------------------------------------------------------------------
+
+LOCAL_CONF="${BUILDDIR}/conf/local.conf"
+PROJECT_INC_REQUIRE='require conf/project.inc'
+
+if [[ -f "${LOCAL_CONF}" ]]; then
+    if ! grep -Eq \
+        '^[[:space:]]*(require|include)[[:space:]]+conf/project\.inc([[:space:]]|$)' \
+        "${LOCAL_CONF}"
+    then
+        _setup_warning \
+            "${LOCAL_CONF} does not include conf/project.inc"
+        _setup_warning \
+            "Add the following line to local.conf.sample:"
+        _setup_warning \
+            "  ${PROJECT_INC_REQUIRE}"
+    fi
+fi
+
+
+# ---------------------------------------------------------------------------
+# Print generated environment
+# ---------------------------------------------------------------------------
+
+echo
+echo "Embedded Linux OTA Platform environment"
+echo "======================================="
+echo
+
+echo "Project:"
+_print_environment_variable PROJECT_ROOT
+_print_environment_variable PROJECT_NAME
+
+echo
+echo "Yocto:"
+_print_environment_variable TEMPLATECONF
+_print_environment_variable BUILDDIR
+_print_environment_variable YOCTO_MACHINE
+_print_environment_variable YOCTO_IMAGE
+printf "  %-28s %s\n" "PROJECT_INC:" "${PROJECT_INC}"
+
+echo
+echo "Image:"
+_print_environment_variable IMAGE_RELEASE
+_print_environment_variable IMAGE_BUILD_ID
+_print_environment_variable MENDER_ARTIFACT_NAME
+
+echo
+echo "Mender:"
+_print_environment_variable MENDER_SERVER_URL
+_print_environment_variable MENDER_SERVER_HOST
+_print_environment_variable MENDER_SERVER_HOST_IP
+_print_environment_variable MENDER_SERVER_CRT_PATH
+
+if [[ -n "${MENDER_TENANT_TOKEN:-}" ]]; then
+    printf "  %-28s %s\n" "MENDER_TENANT_TOKEN:" "<configured>"
+else
+    printf "  %-28s %s\n" "MENDER_TENANT_TOKEN:" "<not configured>"
+fi
+
+if [[ -n "${MENDER_ACCESS_TOKEN:-}" ]]; then
+    printf "  %-28s %s\n" "MENDER_ACCESS_TOKEN:" "<configured>"
+else
+    printf "  %-28s %s\n" "MENDER_ACCESS_TOKEN:" "<not configured>"
+fi
+
+echo
+echo "Test device:"
+_print_environment_variable DEVICE_SSH_USER
+_print_environment_variable DEVICE_IP_ADDRESS
+_print_environment_variable DEVICE_MENDER_ID
+
+echo
+echo "Current directory:"
+printf "  %s\n" "${PWD}"
+
+echo
+echo "Build command:"
+printf "  bitbake %s\n" "${YOCTO_IMAGE}"
+echo
+
