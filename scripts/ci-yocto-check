@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+: "${YOCTO_IMAGE:?Run 'source scripts/setup-env' first}"
+
+tasks_file="$(mktemp)"
+
+cleanup() {
+    rm -f "${tasks_file}"
+}
+
+trap cleanup EXIT
+
+echo "Parsing BitBake metadata..."
+bitbake -p
+
+echo "Validating target task graph..."
+bitbake "${YOCTO_IMAGE}" -c listtasks >"${tasks_file}"
+
+required_tasks=(
+    do_rootfs
+    do_image_mender
+    do_image_wic
+)
+
+for task in "${required_tasks[@]}"; do
+    if ! grep -q "^${task}[[:space:]]" "${tasks_file}"; then
+        echo "Error: required BitBake task is missing: ${task}" >&2
+        exit 1
+    fi
+
+    echo "  ${task}: OK"
+done
+
+echo
+echo "Yocto metadata checks passed."

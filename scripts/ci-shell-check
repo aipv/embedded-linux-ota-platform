@@ -14,7 +14,8 @@ SHELL_SCRIPTS=(
     scripts/validate-build
     scripts/ota-deployment
     scripts/test-pipeline
-    scripts/ci-check
+    scripts/ci-shell-check
+    scripts/ci-yocto-check
 )
 
 check_optional_tool() {

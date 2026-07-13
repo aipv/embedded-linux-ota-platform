@@ -13,7 +13,7 @@ SHELL_SCRIPTS=(
     "${SCRIPT_DIR}/validate-build"
     "${SCRIPT_DIR}/ota-deployment"
     "${SCRIPT_DIR}/test-pipeline"
-    "${SCRIPT_DIR}/ci-check"
+    "${SCRIPT_DIR}/ci-shell-check"
     "${SCRIPT_DIR}/ci-yocto-check"
     "${SCRIPT_DIR}/format"
 )
