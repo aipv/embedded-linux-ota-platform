@@ -39,10 +39,11 @@ echo ""
 
 # Unmount any mounted partitions on the device
 echo "Checking for mounted partitions on ${DEVICE}..."
-MOUNTED_PARTS=$(findmnt -n -o TARGET --source "${DEVICE}" 2>/dev/null || true)
+# Get list of mounted partitions belonging to this device
+MOUNTED_PARTS=$(mount | grep -E "^${DEVICE}[^a-zA-Z]" | cut -d' ' -f1 || true)
 if [[ -n "${MOUNTED_PARTS}" ]]; then
     echo "Unmounting mounted partitions..."
-    findmnt -n -o TARGET --source "${DEVICE}" | xargs -r umount -v
+    echo "${MOUNTED_PARTS}" | xargs -r umount -v
     echo ""
 fi
 
@@ -55,6 +56,9 @@ echo "Device:     ${DEVICE}"
 echo ""
 echo "WARNING: This will ERASE all data on ${DEVICE}!"
 echo ""
+
+echo "Flashing ${IMAGE_FILE} to ${DEVICE}..."
+echo ""
 read -p "Are you sure you want to continue? (yes/no): " -r
 echo ""
 
@@ -63,7 +67,6 @@ if [[ ! "${REPLY}" =~ ^yes$ ]]; then
     exit 1
 fi
 
-echo "Flashing ${IMAGE_FILE} to ${DEVICE}..."
 dd if="${IMAGE_FILE}" of="${DEVICE}" bs=4M status=progress conv=fsync
 sync
 echo "Done."
