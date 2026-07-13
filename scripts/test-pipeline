@@ -1,0 +1,521 @@
+#!/usr/bin/env bash
+#
+# test-pipeline
+#
+# End-to-end OTA test pipeline suitable as a foundation for CI/CD:
+#   1. Build the Yocto image
+#   2. Validate generated build metadata and outputs
+#   3. Upload and deploy the Artifact
+#   4. Wait for deployment completion
+#   5. Validate the target device over SSH
+#
+# Prerequisite:
+#   source scripts/setup-env
+#
+# Usage:
+#   test-pipeline [options]
+#
+# Build options:
+#   -r, --release <name>        IMAGE_RELEASE. Default: dev
+#   -b, --build-id <id>         IMAGE_BUILD_ID. Default: current UTC time
+#
+# Deployment options:
+#   -d, --device-id <id>        Override DEVICE_MENDER_ID
+#   -H, --host <host>           Override DEVICE_IP_ADDRESS
+#   -u, --user <user>           Override DEVICE_SSH_USER
+#   -n, --name <name>           Override deployment name
+#   -i, --interval <seconds>    Polling interval. Default: 15
+#   -t, --timeout <seconds>     Deployment timeout. Default: 1800
+#   -s, --service <name>        Validate a systemd service after deployment.
+#                               May be specified multiple times.
+#       --skip-upload           Do not upload the Artifact
+#       --skip-deployment       Stop after build verification
+#       --skip-validation       Do not run SSH validation
+#       --refresh-host-key      Refresh the stored SSH host key
+#
+# CI options:
+#   -y, --yes                   Non-interactive mode
+#       --log-dir <path>        Store stage logs in this directory
+#       --keep-going            Reserved for future multi-target pipelines
+#   -h, --help                  Show this help
+#
+
+set -euo pipefail
+
+
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+
+RELEASE="dev"
+BUILD_ID=""
+DEVICE_ID="${DEVICE_MENDER_ID:-}"
+DEVICE_HOST="${DEVICE_IP_ADDRESS:-}"
+DEVICE_USER="${DEVICE_SSH_USER:-}"
+DEPLOYMENT_NAME=""
+POLL_INTERVAL=15
+DEPLOYMENT_TIMEOUT=1800
+SKIP_UPLOAD=false
+SKIP_DEPLOYMENT=false
+SKIP_VALIDATION=false
+REFRESH_HOST_KEY=true
+ASSUME_YES=true
+LOG_DIR=""
+REQUIRED_SERVICES=()
+
+PIPELINE_START="$(date +%s)"
+CURRENT_STAGE="initialization"
+
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+
+line()
+{
+    printf '%*s\n' 72 '' | tr ' ' '='
+}
+
+
+section_line()
+{
+    printf '%*s\n' 72 '' | tr ' ' '-'
+}
+
+
+banner()
+{
+    echo
+    line
+    printf "%36s\n" "Embedded Linux OTA Test Pipeline"
+    line
+    echo
+}
+
+
+stage()
+{
+    local number="$1"
+    local total="$2"
+    local title="$3"
+
+    CURRENT_STAGE="${title}"
+
+    echo
+    section_line
+    printf "Stage %s/%s  %s\n" "${number}" "${total}" "${title}"
+    section_line
+    echo
+}
+
+
+success()
+{
+    echo "OK: $*"
+}
+
+
+error()
+{
+    echo "Error: $*" >&2
+}
+
+
+format_duration()
+{
+    local seconds="$1"
+    local minutes=$((seconds / 60))
+    local remaining=$((seconds % 60))
+
+    if ((minutes > 0)); then
+        printf '%dm %ds' "${minutes}" "${remaining}"
+    else
+        printf '%ds' "${remaining}"
+    fi
+}
+
+
+usage()
+{
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Run the complete OTA build, deployment and validation pipeline.
+
+Build options:
+  -r, --release <name>        IMAGE_RELEASE. Default: dev
+  -b, --build-id <id>         IMAGE_BUILD_ID. Default: current UTC time
+
+Deployment options:
+  -d, --device-id <id>        Override DEVICE_MENDER_ID
+  -H, --host <host>           Override DEVICE_IP_ADDRESS
+  -u, --user <user>           Override DEVICE_SSH_USER
+  -n, --name <name>           Override deployment name
+  -i, --interval <seconds>    Polling interval. Default: 15
+  -t, --timeout <seconds>     Deployment timeout. Default: 1800
+  -s, --service <name>        Validate a systemd service after deployment
+      --skip-upload           Skip Artifact upload
+      --skip-deployment       Stop after build verification
+      --skip-validation       Skip SSH validation
+      --refresh-host-key      Refresh stored SSH host key
+
+CI options:
+  -y, --yes                   Non-interactive mode
+      --log-dir <path>        Store stage logs in this directory
+  -h, --help                  Show this help
+
+Examples:
+  $(basename "$0")
+  $(basename "$0") --yes
+  $(basename "$0") -r staging --yes
+  $(basename "$0") -r prod -b 1.2.0 --yes
+  $(basename "$0") --skip-deployment
+  $(basename "$0") --service my-application.service --yes
+EOF
+}
+
+
+require_variable()
+{
+    local variable_name="$1"
+
+    if [[ -z "${!variable_name:-}" ]]; then
+        error "${variable_name} is not set."
+        return 1
+    fi
+}
+
+
+run_stage()
+{
+    local stage_name="$1"
+    shift
+
+    if [[ -n "${LOG_DIR}" ]]; then
+        local safe_name
+        safe_name="$(
+            printf '%s' "${stage_name}" |
+            tr '[:upper:] ' '[:lower:]-' |
+            tr -cd 'a-z0-9._-'
+        )"
+
+        "$@" 2>&1 | tee "${LOG_DIR}/${safe_name}.log"
+    else
+        "$@"
+    fi
+}
+
+
+on_error()
+{
+    local exit_code=$?
+    local end_time
+    local elapsed
+
+    end_time="$(date +%s)"
+    elapsed="$((end_time - PIPELINE_START))"
+
+    echo >&2
+    line >&2
+    echo "OTA test pipeline failed" >&2
+    line >&2
+    printf "  %-24s %s\n" "FAILED_STAGE:" "${CURRENT_STAGE}" >&2
+    printf "  %-24s %s\n" "EXIT_CODE:" "${exit_code}" >&2
+    printf "  %-24s %s\n" "ELAPSED_TIME:" "$(format_duration "${elapsed}")" >&2
+
+    if [[ -n "${LOG_DIR}" ]]; then
+        printf "  %-24s %s\n" "LOG_DIR:" "${LOG_DIR}" >&2
+    fi
+
+    line >&2
+    exit "${exit_code}"
+}
+
+trap on_error ERR
+
+
+# ---------------------------------------------------------------------------
+# Parse options
+# ---------------------------------------------------------------------------
+
+while (($# > 0)); do
+    case "$1" in
+        -r|--release)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            RELEASE="$2"
+            shift 2
+            ;;
+        -b|--build-id)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            BUILD_ID="$2"
+            shift 2
+            ;;
+        -d|--device-id)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            DEVICE_ID="$2"
+            shift 2
+            ;;
+        -H|--host)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            DEVICE_HOST="$2"
+            shift 2
+            ;;
+        -u|--user)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            DEVICE_USER="$2"
+            shift 2
+            ;;
+        -n|--name)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            DEPLOYMENT_NAME="$2"
+            shift 2
+            ;;
+        -i|--interval)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            POLL_INTERVAL="$2"
+            shift 2
+            ;;
+        -t|--timeout)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            DEPLOYMENT_TIMEOUT="$2"
+            shift 2
+            ;;
+        -s|--service)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            REQUIRED_SERVICES+=("$2")
+            shift 2
+            ;;
+        --skip-upload)
+            SKIP_UPLOAD=true
+            shift
+            ;;
+        --skip-deployment)
+            SKIP_DEPLOYMENT=true
+            shift
+            ;;
+        --skip-validation)
+            SKIP_VALIDATION=true
+            shift
+            ;;
+        --refresh-host-key)
+            REFRESH_HOST_KEY=true
+            shift
+            ;;
+        -y|--yes)
+            ASSUME_YES=true
+            shift
+            ;;
+        --log-dir)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            LOG_DIR="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+
+# ---------------------------------------------------------------------------
+# Validate environment
+# ---------------------------------------------------------------------------
+
+require_variable SCRIPTS_DIR || {
+    error "Run 'source scripts/setup-env' first."
+    exit 1
+}
+
+required_commands=(build-image check-build)
+
+if [[ "${SKIP_DEPLOYMENT}" != true ]]; then
+    required_commands+=(ota-deployment)
+fi
+
+for command_name in "${required_commands[@]}"; do
+    if [[ ! -x "${SCRIPTS_DIR}/${command_name}" ]]; then
+        error "Required command is missing or not executable:"
+        error "  ${SCRIPTS_DIR}/${command_name}"
+        exit 1
+    fi
+done
+
+if [[ -n "${LOG_DIR}" ]]; then
+    mkdir -p "${LOG_DIR}"
+    LOG_DIR="$(cd "${LOG_DIR}" && pwd)"
+fi
+
+if ! [[ "${POLL_INTERVAL}" =~ ^[0-9]+$ ]] || ((POLL_INTERVAL < 1)); then
+    error "Invalid polling interval: ${POLL_INTERVAL}"
+    exit 1
+fi
+
+if ! [[ "${DEPLOYMENT_TIMEOUT}" =~ ^[0-9]+$ ]] || ((DEPLOYMENT_TIMEOUT < 1)); then
+    error "Invalid deployment timeout: ${DEPLOYMENT_TIMEOUT}"
+    exit 1
+fi
+
+
+# ---------------------------------------------------------------------------
+# Pipeline summary
+# ---------------------------------------------------------------------------
+
+banner
+
+echo "Build"
+echo "-----"
+printf "  %-24s %s\n" "PROJECT_NAME:" "${PROJECT_NAME:-<not set>}"
+printf "  %-24s %s\n" "YOCTO_MACHINE:" "${YOCTO_MACHINE:-<not set>}"
+printf "  %-24s %s\n" "YOCTO_IMAGE:" "${YOCTO_IMAGE:-<not set>}"
+printf "  %-24s %s\n" "IMAGE_RELEASE:" "${RELEASE}"
+printf "  %-24s %s\n" "IMAGE_BUILD_ID:" "${BUILD_ID:-<current UTC time>}"
+
+echo
+echo "Deployment"
+echo "----------"
+printf "  %-24s %s\n" "SKIP_DEPLOYMENT:" "${SKIP_DEPLOYMENT}"
+printf "  %-24s %s\n" "SKIP_UPLOAD:" "${SKIP_UPLOAD}"
+printf "  %-24s %s\n" "SKIP_VALIDATION:" "${SKIP_VALIDATION}"
+printf "  %-24s %s\n" "DEVICE_MENDER_ID:" "${DEVICE_ID:-<not set>}"
+printf "  %-24s %s\n" "DEVICE_SSH:" "${DEVICE_USER:-<not set>}@${DEVICE_HOST:-<not set>}"
+
+if [[ -n "${LOG_DIR}" ]]; then
+    echo
+    printf "  %-24s %s\n" "LOG_DIR:" "${LOG_DIR}"
+fi
+
+echo
+
+if [[ "${ASSUME_YES}" != true ]]; then
+    read -r -p "Start OTA test pipeline? [y/N] " answer
+
+    if [[ ! "${answer}" =~ ^[Yy]$ ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+fi
+
+if [[ "${SKIP_DEPLOYMENT}" == true ]]; then
+    TOTAL_STAGES=2
+else
+    TOTAL_STAGES=3
+fi
+
+
+# ---------------------------------------------------------------------------
+# Stage 1: Build
+# ---------------------------------------------------------------------------
+
+stage 1 "${TOTAL_STAGES}" "Build Yocto image"
+
+build_args=(-r "${RELEASE}")
+
+if [[ -n "${BUILD_ID}" ]]; then
+    build_args+=(-b "${BUILD_ID}")
+fi
+
+run_stage "build-image" build-image "${build_args[@]}"
+success "Yocto image build completed."
+
+
+# ---------------------------------------------------------------------------
+# Stage 2: Verify build
+# ---------------------------------------------------------------------------
+
+stage 2 "${TOTAL_STAGES}" "Verify local build"
+
+run_stage "check-build" check-build --verify
+success "Local build verification passed."
+
+
+# ---------------------------------------------------------------------------
+# Stage 3: Deploy and validate
+# ---------------------------------------------------------------------------
+
+if [[ "${SKIP_DEPLOYMENT}" != true ]]; then
+    stage 3 "${TOTAL_STAGES}" "Deploy and validate OTA update"
+
+    ota_args=(
+        --device-id "${DEVICE_ID}"
+        --host "${DEVICE_HOST}"
+        --user "${DEVICE_USER}"
+        --interval "${POLL_INTERVAL}"
+        --timeout "${DEPLOYMENT_TIMEOUT}"
+        --yes
+    )
+
+    if [[ -n "${DEPLOYMENT_NAME}" ]]; then
+        ota_args+=(--name "${DEPLOYMENT_NAME}")
+    fi
+
+    if [[ "${SKIP_UPLOAD}" == true ]]; then
+        ota_args+=(--skip-upload)
+    fi
+
+    if [[ "${SKIP_VALIDATION}" == true ]]; then
+        ota_args+=(--skip-validation)
+    fi
+
+    if [[ "${REFRESH_HOST_KEY}" == true ]]; then
+        ota_args+=(--refresh-host-key)
+    fi
+
+    for service_name in "${REQUIRED_SERVICES[@]}"; do
+        ota_args+=(--service "${service_name}")
+    done
+
+    run_stage "ota-deployment" ota-deployment "${ota_args[@]}"
+    success "OTA deployment and validation completed."
+fi
+
+
+# ---------------------------------------------------------------------------
+# Final summary
+# ---------------------------------------------------------------------------
+
+PIPELINE_END="$(date +%s)"
+PIPELINE_ELAPSED="$((PIPELINE_END - PIPELINE_START))"
+
+# Reload metadata generated by build-image.
+# shellcheck source=/dev/null
+source "${SCRIPTS_DIR}/check-build"
+check_build_load
+
+echo
+line
+echo "OTA test pipeline completed successfully"
+line
+printf "  %-24s %s\n" "PROJECT:" "${BUILD_PROJECT_NAME}"
+printf "  %-24s %s\n" "RELEASE:" "${BUILD_RELEASE}"
+printf "  %-24s %s\n" "BUILD_ID:" "${BUILD_ID}"
+printf "  %-24s %s\n" "ARTIFACT:" "${BUILD_ARTIFACT_NAME}"
+printf "  %-24s %s\n" "ARTIFACT_FILE:" "${BUILD_ARTIFACT_FILE}"
+printf "  %-24s %s\n" "GIT_COMMIT:" "${BUILD_GIT_COMMIT}"
+printf "  %-24s %s\n" "GIT_DIRTY:" "${BUILD_GIT_DIRTY}"
+
+if [[ "${SKIP_DEPLOYMENT}" == true ]]; then
+    printf "  %-24s %s\n" "DEPLOYMENT:" "SKIPPED"
+else
+    printf "  %-24s %s\n" "DEPLOYMENT:" "PASS"
+
+    if [[ "${SKIP_VALIDATION}" == true ]]; then
+        printf "  %-24s %s\n" "DEVICE_VALIDATION:" "SKIPPED"
+    else
+        printf "  %-24s %s\n" "DEVICE_VALIDATION:" "PASS"
+    fi
+fi
+
+printf "  %-24s %s\n" "ELAPSED_TIME:" "$(format_duration "${PIPELINE_ELAPSED}")"
+
+if [[ -n "${LOG_DIR}" ]]; then
+    printf "  %-24s %s\n" "LOG_DIR:" "${LOG_DIR}"
+fi
+
+line
+echo
