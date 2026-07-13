@@ -279,26 +279,25 @@ cat >"${PROJECT_INC}" <<EOF
 # ---------------------------------------------------------------------------
 
 # Project
-PROJECT_ROOT = "$(_bitbake_escape "${PROJECT_ROOT}")"
-PROJECT_NAME = "$(_bitbake_escape "${PROJECT_NAME}")"
+PROJECT_ROOT="$(_bitbake_escape "${PROJECT_ROOT}")"
+PROJECT_NAME="$(_bitbake_escape "${PROJECT_NAME}")"
 
 # Build target
-MACHINE = "$(_bitbake_escape "${YOCTO_MACHINE}")"
-YOCTO_IMAGE = "$(_bitbake_escape "${YOCTO_IMAGE}")"
+MACHINE="$(_bitbake_escape "${YOCTO_MACHINE}")"
+YOCTO_IMAGE="$(_bitbake_escape "${YOCTO_IMAGE}")"
 
 # Image version
-IMAGE_RELEASE = "$(_bitbake_escape "${IMAGE_RELEASE}")"
-IMAGE_BUILD_ID = "$(_bitbake_escape "${IMAGE_BUILD_ID}")"
+IMAGE_RELEASE="$(_bitbake_escape "${IMAGE_RELEASE}")"
+IMAGE_BUILD_ID="$(_bitbake_escape "${IMAGE_BUILD_ID}")"
 
 # Mender Artifact
-MENDER_ARTIFACT_NAME = "$(_bitbake_escape "${MENDER_ARTIFACT_NAME}")"
-MENDER_DEVICE_TYPE ?= "\${MACHINE}"
+MENDER_ARTIFACT_NAME="$(_bitbake_escape "${MENDER_ARTIFACT_NAME}")"
 
 # Mender server
-MENDER_SERVER_URL = "$(_bitbake_escape "${MENDER_SERVER_URL}")"
-PROJECT_MENDER_SERVER_HOST = "$(_bitbake_escape "${MENDER_SERVER_HOST}")"
-PROJECT_MENDER_SERVER_HOST_IP = "$(_bitbake_escape "${MENDER_SERVER_HOST_IP:-}")"
-PROJECT_MENDER_SERVER_CRT = "$(_bitbake_escape "${MENDER_SERVER_CRT_PATH}")"
+MENDER_SERVER_URL="$(_bitbake_escape "${MENDER_SERVER_URL}")"
+PROJECT_MENDER_SERVER_HOST="$(_bitbake_escape "${MENDER_SERVER_HOST}")"
+PROJECT_MENDER_SERVER_HOST_IP="$(_bitbake_escape "${MENDER_SERVER_HOST_IP:-}")"
+PROJECT_MENDER_SERVER_CRT="$(_bitbake_escape "${MENDER_SERVER_CRT_PATH}")"
 EOF
 
 # The tenant token is required by the device, but the Management API access
@@ -307,7 +306,7 @@ if [[ -n "${MENDER_TENANT_TOKEN:-}" ]]; then
     cat >>"${PROJECT_INC}" <<EOF
 
 # Hosted Mender tenant
-MENDER_TENANT_TOKEN = "$(_bitbake_escape "${MENDER_TENANT_TOKEN}")"
+MENDER_TENANT_TOKEN="$(_bitbake_escape "${MENDER_TENANT_TOKEN}")"
 EOF
 fi
 
@@ -331,6 +330,23 @@ if [[ -f "${LOCAL_CONF}" ]]; then
         _setup_warning \
             "  ${PROJECT_INC_REQUIRE}"
     fi
+fi
+
+
+# ---------------------------------------------------------------------------
+# Compute target file paths
+# ---------------------------------------------------------------------------
+
+# DEPLOY_DIR_IMAGE is not exported by oe-init-build-env, compute from BUILDDIR
+if [[ -n "${BUILDDIR:-}" ]] && [[ -n "${YOCTO_MACHINE:-}" ]]; then
+    DEPLOY_DIR_IMAGE="${BUILDDIR}/tmp/deploy/images/${YOCTO_MACHINE}"
+fi
+
+if [[ -n "${DEPLOY_DIR_IMAGE:-}" ]]; then
+    TARGET_IMAGE_FILE="${DEPLOY_DIR_IMAGE}/${YOCTO_IMAGE}-${YOCTO_MACHINE}.sdimg"
+    TARGET_MENDER_FILE="${DEPLOY_DIR_IMAGE}/${YOCTO_IMAGE}-${YOCTO_MACHINE}.mender"
+    export TARGET_IMAGE_FILE
+    export TARGET_MENDER_FILE
 fi
 
 
@@ -379,6 +395,11 @@ if [[ -n "${MENDER_ACCESS_TOKEN:-}" ]]; then
 else
     printf "  %-28s %s\n" "MENDER_ACCESS_TOKEN:" "<not configured>"
 fi
+
+echo
+echo "Target files:"
+_print_environment_variable TARGET_IMAGE_FILE
+_print_environment_variable TARGET_MENDER_FILE
 
 echo
 echo "Test device:"
