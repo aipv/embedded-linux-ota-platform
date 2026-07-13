@@ -39,8 +39,9 @@ echo ""
 
 # Unmount any mounted partitions on the device
 echo "Checking for mounted partitions on ${DEVICE}..."
-# Get list of mounted partitions belonging to this device
-MOUNTED_PARTS=$(mount | grep -E "^${DEVICE}[^a-zA-Z]" | cut -d' ' -f1 || true)
+# Get list of mounted partitions belonging to this device (e.g., mmcblk0p1, mmcblk0p2)
+# Exclude boot and rpmb devices (e.g., mmcblk0boot0, mmcblk0rpmb)
+MOUNTED_PARTS=$(mount | grep -vE "(boot|rpmb)" | grep -E "^${DEVICE}p[0-9]" | cut -d' ' -f1 || true)
 if [[ -n "${MOUNTED_PARTS}" ]]; then
     echo "Unmounting mounted partitions..."
     echo "${MOUNTED_PARTS}" | xargs -r umount -v
