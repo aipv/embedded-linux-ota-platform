@@ -25,6 +25,11 @@ if [[ -f "${PROJECT_DIR}/project.conf" ]]; then
     source "${PROJECT_DIR}/project.conf"
 fi
 
+# Source project.inc for dynamic variables (shell-compatible format)
+if [[ -f "${PROJECT_DIR}/build/conf/project.inc" ]]; then
+    source "${PROJECT_DIR}/build/conf/project.inc"
+fi
+
 # Source setup-environment if available (sets YOCTO_MACHINE, YOCTO_IMAGE, etc.)
 if [[ -f "${PROJECT_DIR}/setup-environment" ]]; then
     # Only source if BUILDDIR is not already set

@@ -279,26 +279,25 @@ cat >"${PROJECT_INC}" <<EOF
 # ---------------------------------------------------------------------------
 
 # Project
-PROJECT_ROOT = "$(_bitbake_escape "${PROJECT_ROOT}")"
-PROJECT_NAME = "$(_bitbake_escape "${PROJECT_NAME}")"
+PROJECT_ROOT="$(_bitbake_escape "${PROJECT_ROOT}")"
+PROJECT_NAME="$(_bitbake_escape "${PROJECT_NAME}")"
 
 # Build target
-MACHINE = "$(_bitbake_escape "${YOCTO_MACHINE}")"
-YOCTO_IMAGE = "$(_bitbake_escape "${YOCTO_IMAGE}")"
+MACHINE="$(_bitbake_escape "${YOCTO_MACHINE}")"
+YOCTO_IMAGE="$(_bitbake_escape "${YOCTO_IMAGE}")"
 
 # Image version
-IMAGE_RELEASE = "$(_bitbake_escape "${IMAGE_RELEASE}")"
-IMAGE_BUILD_ID = "$(_bitbake_escape "${IMAGE_BUILD_ID}")"
+IMAGE_RELEASE="$(_bitbake_escape "${IMAGE_RELEASE}")"
+IMAGE_BUILD_ID="$(_bitbake_escape "${IMAGE_BUILD_ID}")"
 
 # Mender Artifact
-MENDER_ARTIFACT_NAME = "$(_bitbake_escape "${MENDER_ARTIFACT_NAME}")"
-MENDER_DEVICE_TYPE ?= "\${MACHINE}"
+MENDER_ARTIFACT_NAME="$(_bitbake_escape "${MENDER_ARTIFACT_NAME}")"
 
 # Mender server
-MENDER_SERVER_URL = "$(_bitbake_escape "${MENDER_SERVER_URL}")"
-PROJECT_MENDER_SERVER_HOST = "$(_bitbake_escape "${MENDER_SERVER_HOST}")"
-PROJECT_MENDER_SERVER_HOST_IP = "$(_bitbake_escape "${MENDER_SERVER_HOST_IP:-}")"
-PROJECT_MENDER_SERVER_CRT = "$(_bitbake_escape "${MENDER_SERVER_CRT_PATH}")"
+MENDER_SERVER_URL="$(_bitbake_escape "${MENDER_SERVER_URL}")"
+PROJECT_MENDER_SERVER_HOST="$(_bitbake_escape "${MENDER_SERVER_HOST}")"
+PROJECT_MENDER_SERVER_HOST_IP="$(_bitbake_escape "${MENDER_SERVER_HOST_IP:-}")"
+PROJECT_MENDER_SERVER_CRT="$(_bitbake_escape "${MENDER_SERVER_CRT_PATH}")"
 EOF
 
 # The tenant token is required by the device, but the Management API access
@@ -307,7 +306,7 @@ if [[ -n "${MENDER_TENANT_TOKEN:-}" ]]; then
     cat >>"${PROJECT_INC}" <<EOF
 
 # Hosted Mender tenant
-MENDER_TENANT_TOKEN = "$(_bitbake_escape "${MENDER_TENANT_TOKEN}")"
+MENDER_TENANT_TOKEN="$(_bitbake_escape "${MENDER_TENANT_TOKEN}")"
 EOF
 fi
 

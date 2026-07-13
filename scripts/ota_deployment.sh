@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
-# Upload a Mender artifact to the Mender server
+# Upload and deploy the Mender artifact to a device
 #
 # Usage:
-#   ./scripts/upload_artifact.sh <artifact-file.mender>
+#   source setup-environment
+#   ./scripts/ota_deployment.sh [artifact_file]
 #
-# The artifact will be uploaded to the Mender server configured in project.conf
+# If artifact_file is not provided, uses TARGET_MENDER_FILE from environment
 
 set -euo pipefail
 
@@ -41,7 +42,6 @@ elif [[ -n "${TARGET_MENDER_FILE:-}" ]] && [[ -f "${TARGET_MENDER_FILE}" ]]; the
 else
     echo "Error: artifact file not specified and TARGET_MENDER_FILE is not set or not found" >&2
     echo "Usage: $0 [artifact-file.mender]" >&2
-    echo "       (without parameter, uses TARGET_MENDER_FILE from setup-environment)" >&2
     exit 1
 fi
 
@@ -56,23 +56,48 @@ if [[ -z "${MENDER_ACCESS_TOKEN:-}" ]]; then
     exit 1
 fi
 
+if [[ -z "${DEVICE_MENDER_ID:-}" ]]; then
+    echo "Error: DEVICE_MENDER_ID is not set" >&2
+    exit 1
+fi
+
 if [[ -z "${MENDER_SERVER_URL:-}" ]]; then
     echo "Error: MENDER_SERVER_URL is not set" >&2
     exit 1
 fi
 
+# Get artifact name
+ARTIFACT_NAME=$(mender-artifact read "${ARTIFACT_FILE}" 2>/dev/null \
+    | awk -F': ' '/^  Name:/ {print $2}')
+
+if [[ -z "${ARTIFACT_NAME}" ]]; then
+    echo "Error: Could not read artifact name from ${ARTIFACT_FILE}" >&2
+    exit 1
+fi
+
+DEPLOYMENT_NAME="deploy-${ARTIFACT_NAME}"
+
 echo "========================================"
-echo "Uploading Mender Artifact"
+echo "OTA Deployment"
 echo "========================================"
-echo "Server     : $MENDER_SERVER_URL"
-echo "Artifact   : $ARTIFACT_FILE"
+echo "Server      : ${MENDER_SERVER_URL}"
+echo "Device ID   : ${DEVICE_MENDER_ID}"
+echo "Artifact    : ${ARTIFACT_NAME}"
+echo "Artifact File: ${ARTIFACT_FILE}"
+echo "Deployment  : ${DEPLOYMENT_NAME}"
 echo ""
 
-read -rp "Continue? [y/N] " ANSWER
+read -rp "Upload and deploy? [y/N] " ANSWER
 if [[ ! "$ANSWER" =~ ^[Yy]$ ]]; then
     echo "Cancelled."
     exit 0
 fi
+
+echo ""
+echo "========================================"
+echo "Step 1: Uploading Artifact"
+echo "========================================"
+echo ""
 
 curl -i -X POST \
     "${MENDER_SERVER_URL}/api/management/v1/deployments/artifacts" \
@@ -80,4 +105,24 @@ curl -i -X POST \
     -F "artifact=@${ARTIFACT_FILE}"
 
 echo ""
-echo "Upload request sent."
+echo "========================================"
+echo "Step 2: Creating Deployment"
+echo "========================================"
+echo ""
+
+curl -i -X POST \
+    "${MENDER_SERVER_URL}/api/management/v1/deployments/deployments" \
+    -H "Authorization: Bearer ${MENDER_ACCESS_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"name\": \"${DEPLOYMENT_NAME}\",
+        \"artifact_name\": \"${ARTIFACT_NAME}\",
+        \"devices\": [
+            \"${DEVICE_MENDER_ID}\"
+        ]
+    }"
+
+echo ""
+echo "========================================"
+echo "OTA Deployment completed."
+echo "========================================"

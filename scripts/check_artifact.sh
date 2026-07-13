@@ -20,6 +20,11 @@ if [[ -f "${PROJECT_DIR}/project.conf" ]]; then
     source "${PROJECT_DIR}/project.conf"
 fi
 
+# Source project.inc for dynamic variables
+if [[ -f "${PROJECT_DIR}/build/conf/project.inc" ]]; then
+    source "${PROJECT_DIR}/build/conf/project.inc"
+fi
+
 # Source secrets if available
 if [[ -f "${PROJECT_DIR}/certificates/secrets.conf" ]]; then
     source "${PROJECT_DIR}/certificates/secrets.conf"

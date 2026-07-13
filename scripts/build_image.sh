@@ -77,25 +77,19 @@ if [[ -z "$BUILD_ID" ]]; then
     BUILD_ID="$(date -u +%Y%m%d%H%M%S)"
 fi
 
-# Update project.conf with new values
-if [[ -n "$BUILD_ID" ]]; then
-    sed -i "s/^IMAGE_BUILD_ID=.*/IMAGE_BUILD_ID=\"$BUILD_ID\"/" "${PROJECT_DIR}/project.conf"
-fi
-
-if [[ -n "$RELEASE" ]]; then
-    sed -i "s/^IMAGE_RELEASE=.*/IMAGE_RELEASE=\"$RELEASE\"/" "${PROJECT_DIR}/project.conf"
-fi
+# Use provided RELEASE or keep current from project.conf
+FINAL_RELEASE="${RELEASE:-${IMAGE_RELEASE}}"
 
 # Generate new MENDER_ARTIFACT_NAME from the values we already have
-MENDER_ARTIFACT_NAME="${PROJECT_NAME}-${RELEASE:-${IMAGE_RELEASE}}-${BUILD_ID}"
+MENDER_ARTIFACT_NAME="${PROJECT_NAME}-${FINAL_RELEASE}-${BUILD_ID}"
 
 # Update project.inc with new values
 PROJECT_INC="${PROJECT_DIR}/build/conf/project.inc"
-sed -i "s/^IMAGE_RELEASE = .*/IMAGE_RELEASE = \"${RELEASE:-${IMAGE_RELEASE}}\"/" "${PROJECT_INC}"
-sed -i "s/^IMAGE_BUILD_ID = .*/IMAGE_BUILD_ID = \"${BUILD_ID}\"/" "${PROJECT_INC}"
-sed -i "s/^MENDER_ARTIFACT_NAME = .*/MENDER_ARTIFACT_NAME = \"${MENDER_ARTIFACT_NAME}\"/" "${PROJECT_INC}"
+sed -i "s/^IMAGE_RELEASE=.*/IMAGE_RELEASE=\"${FINAL_RELEASE}\"/" "${PROJECT_INC}"
+sed -i "s/^IMAGE_BUILD_ID=.*/IMAGE_BUILD_ID=\"${BUILD_ID}\"/" "${PROJECT_INC}"
+sed -i "s/^MENDER_ARTIFACT_NAME=.*/MENDER_ARTIFACT_NAME=\"${MENDER_ARTIFACT_NAME}\"/" "${PROJECT_INC}"
 
-echo "Updated: IMAGE_RELEASE=${RELEASE:-${IMAGE_RELEASE}}, IMAGE_BUILD_ID=${BUILD_ID}, MENDER_ARTIFACT_NAME=${MENDER_ARTIFACT_NAME}"
+echo "Updated: IMAGE_RELEASE=${FINAL_RELEASE}, IMAGE_BUILD_ID=${BUILD_ID}, MENDER_ARTIFACT_NAME=${MENDER_ARTIFACT_NAME}"
 
 # Check if already in Yocto environment (BUILDDIR is set)
 if [[ -z "${BUILDDIR:-}" ]]; then
