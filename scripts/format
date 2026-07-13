@@ -15,6 +15,7 @@ SHELL_SCRIPTS=(
     "${SCRIPT_DIR}/test-pipeline"
     "${SCRIPT_DIR}/ci-shell-check"
     "${SCRIPT_DIR}/ci-yocto-check"
+    "${SCRIPT_DIR}/ci-build-check"
     "${SCRIPT_DIR}/format"
 )
 

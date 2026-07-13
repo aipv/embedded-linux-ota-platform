@@ -16,6 +16,7 @@ SHELL_SCRIPTS=(
     scripts/test-pipeline
     scripts/ci-shell-check
     scripts/ci-yocto-check
+    scripts/ci-build_check
 )
 
 check_optional_tool() {

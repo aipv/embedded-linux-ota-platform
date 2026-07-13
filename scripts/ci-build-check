@@ -1,0 +1,276 @@
+#!/usr/bin/env bash
+#
+# ci-build-check
+#
+# Build the configured Yocto image and verify the generated build outputs.
+#
+# Prerequisite:
+#   source scripts/setup-env
+#
+# Usage:
+#   ci-build-check [options]
+#
+# Options:
+#   -r, --release <name>      IMAGE_RELEASE. Default: ci
+#   -b, --build-id <id>       IMAGE_BUILD_ID.
+#                             Default: current UTC time
+#       --log-dir <path>      Store build and verification logs
+#   -h, --help                Show this help
+#
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+
+RELEASE="ci"
+BUILD_ID=""
+LOG_DIR=""
+START_TIME="$(date +%s)"
+CURRENT_STAGE="initialization"
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+
+error() {
+    echo "Error: $*" >&2
+}
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Build the configured Yocto image and verify the generated outputs.
+
+Options:
+  -r, --release <name>      IMAGE_RELEASE. Default: ci
+  -b, --build-id <id>       IMAGE_BUILD_ID.
+                            Default: current UTC time
+      --log-dir <path>      Store build and verification logs
+  -h, --help                Show this help
+
+Examples:
+  $(basename "$0")
+  $(basename "$0") --release staging
+  $(basename "$0") --release production --build-id 1.0.0
+  $(basename "$0") --log-dir "\${PROJECT_DIR}/pipeline-logs"
+EOF
+}
+
+require_variable() {
+    local variable_name="$1"
+
+    if [[ -z "${!variable_name:-}" ]]; then
+        error "${variable_name} is not set."
+        return 1
+    fi
+}
+
+format_duration() {
+    local seconds="$1"
+    local minutes=$((seconds / 60))
+    local remaining=$((seconds % 60))
+
+    if ((minutes > 0)); then
+        printf '%dm %ds' "${minutes}" "${remaining}"
+    else
+        printf '%ds' "${remaining}"
+    fi
+}
+
+run_stage() {
+    local stage_name="$1"
+    shift
+
+    CURRENT_STAGE="${stage_name}"
+
+    echo
+    echo "------------------------------------------------------------"
+    echo "${stage_name}"
+    echo "------------------------------------------------------------"
+    echo
+
+    if [[ -n "${LOG_DIR}" ]]; then
+        local log_name
+
+        log_name="$(
+            printf '%s' "${stage_name}" |
+                tr '[:upper:] ' '[:lower:]-' |
+                tr -cd 'a-z0-9._-'
+        )"
+
+        "$@" 2>&1 | tee "${LOG_DIR}/${log_name}.log"
+    else
+        "$@"
+    fi
+}
+
+on_error() {
+    local exit_code=$?
+    local end_time
+    local elapsed
+
+    end_time="$(date +%s)"
+    elapsed=$((end_time - START_TIME))
+
+    echo >&2
+    echo "============================================================" >&2
+    echo "CI build check failed" >&2
+    echo "============================================================" >&2
+    printf "  %-24s %s\n" "FAILED_STAGE:" "${CURRENT_STAGE}" >&2
+    printf "  %-24s %s\n" "EXIT_CODE:" "${exit_code}" >&2
+    printf "  %-24s %s\n" "ELAPSED_TIME:" "$(format_duration "${elapsed}")" >&2
+
+    if [[ -n "${LOG_DIR}" ]]; then
+        printf "  %-24s %s\n" "LOG_DIR:" "${LOG_DIR}" >&2
+    fi
+
+    echo "============================================================" >&2
+    exit "${exit_code}"
+}
+
+trap on_error ERR
+
+# ---------------------------------------------------------------------------
+# Parse options
+# ---------------------------------------------------------------------------
+
+while (($# > 0)); do
+    case "$1" in
+        -r | --release)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
+
+            RELEASE="$2"
+            shift 2
+            ;;
+        -b | --build-id)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
+
+            BUILD_ID="$2"
+            shift 2
+            ;;
+        --log-dir)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
+
+            LOG_DIR="$2"
+            shift 2
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+# ---------------------------------------------------------------------------
+# Validate environment
+# ---------------------------------------------------------------------------
+
+require_variable SCRIPTS_DIR || {
+    error "Run 'source scripts/setup-env' first."
+    exit 1
+}
+
+require_variable PROJECT_NAME
+require_variable PROJECT_DIR
+require_variable BUILDDIR
+require_variable YOCTO_MACHINE
+require_variable YOCTO_IMAGE
+
+for command_name in build-image check-build; do
+    if [[ ! -x "${SCRIPTS_DIR}/${command_name}" ]]; then
+        error "Required command is missing or not executable:"
+        error "  ${SCRIPTS_DIR}/${command_name}"
+        exit 1
+    fi
+done
+
+if [[ -n "${LOG_DIR}" ]]; then
+    mkdir -p "${LOG_DIR}"
+    LOG_DIR="$(cd "${LOG_DIR}" && pwd)"
+fi
+
+# ---------------------------------------------------------------------------
+# Build summary
+# ---------------------------------------------------------------------------
+
+echo
+echo "CI Build Check"
+echo "=============="
+printf "  %-24s %s\n" "PROJECT_NAME:" "${PROJECT_NAME}"
+printf "  %-24s %s\n" "YOCTO_MACHINE:" "${YOCTO_MACHINE}"
+printf "  %-24s %s\n" "YOCTO_IMAGE:" "${YOCTO_IMAGE}"
+printf "  %-24s %s\n" "IMAGE_RELEASE:" "${RELEASE}"
+printf "  %-24s %s\n" "IMAGE_BUILD_ID:" "${BUILD_ID:-<current UTC time>}"
+
+if [[ -n "${LOG_DIR}" ]]; then
+    printf "  %-24s %s\n" "LOG_DIR:" "${LOG_DIR}"
+fi
+
+# ---------------------------------------------------------------------------
+# Stage 1: Build
+# ---------------------------------------------------------------------------
+
+build_args=(-r "${RELEASE}")
+
+if [[ -n "${BUILD_ID}" ]]; then
+    build_args+=(-b "${BUILD_ID}")
+fi
+
+run_stage "Build Yocto image" build-image "${build_args[@]}"
+
+# ---------------------------------------------------------------------------
+# Stage 2: Verify
+# ---------------------------------------------------------------------------
+
+run_stage "Verify build outputs" check-build --verify
+
+# ---------------------------------------------------------------------------
+# Final result
+# ---------------------------------------------------------------------------
+
+END_TIME="$(date +%s)"
+ELAPSED=$((END_TIME - START_TIME))
+
+# Load the build metadata generated by build-image.
+# shellcheck source=/dev/null
+source "${SCRIPTS_DIR}/check-build"
+check_build_load
+
+echo
+echo "============================================================"
+echo "CI build check passed"
+echo "============================================================"
+printf "  %-24s %s\n" "PROJECT:" "${BUILD_PROJECT_NAME}"
+printf "  %-24s %s\n" "RELEASE:" "${BUILD_RELEASE}"
+printf "  %-24s %s\n" "BUILD_ID:" "${BUILD_ID}"
+printf "  %-24s %s\n" "ARTIFACT:" "${BUILD_ARTIFACT_NAME}"
+printf "  %-24s %s\n" "ARTIFACT_FILE:" "${BUILD_ARTIFACT_FILE}"
+printf "  %-24s %s\n" "ARTIFACT_SHA256:" "${BUILD_ARTIFACT_SHA256}"
+printf "  %-24s %s\n" "DISK_IMAGE_FILE:" "${BUILD_DISK_IMAGE_FILE}"
+printf "  %-24s %s\n" "GIT_COMMIT:" "${BUILD_GIT_COMMIT}"
+printf "  %-24s %s\n" "GIT_DIRTY:" "${BUILD_GIT_DIRTY}"
+printf "  %-24s %s\n" "ELAPSED_TIME:" "$(format_duration "${ELAPSED}")"
+
+if [[ -n "${LOG_DIR}" ]]; then
+    printf "  %-24s %s\n" "LOG_DIR:" "${LOG_DIR}"
+fi
+
+echo "============================================================"
+echo
