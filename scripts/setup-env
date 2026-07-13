@@ -23,24 +23,20 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     exit 1
 fi
 
-
 # ---------------------------------------------------------------------------
 # Helper functions
 # ---------------------------------------------------------------------------
 
-_setup_error()
-{
+_setup_error() {
     echo "Error: $*" >&2
     return 1
 }
 
-_setup_warning()
-{
+_setup_warning() {
     echo "Warning: $*" >&2
 }
 
-_require_variable()
-{
+_require_variable() {
     local variable_name="$1"
 
     if [[ -z "${!variable_name:-}" ]]; then
@@ -49,16 +45,14 @@ _require_variable()
     fi
 }
 
-_print_environment_variable()
-{
+_print_environment_variable() {
     local variable_name="$1"
     local variable_value="${!variable_name:-<not set>}"
 
     printf "  %-28s %s\n" "${variable_name}:" "${variable_value}"
 }
 
-_prepend_path_once()
-{
+_prepend_path_once() {
     local directory="$1"
 
     case ":${PATH}:" in
@@ -66,7 +60,6 @@ _prepend_path_once()
         *) PATH="${directory}:${PATH}" ;;
     esac
 }
-
 
 # ---------------------------------------------------------------------------
 # Locate the project root
@@ -80,7 +73,6 @@ SECRETS_CONFIG="${PROJECT_DIR}/certificates/secrets.conf"
 SCRIPTS_DIR="${PROJECT_DIR}/scripts"
 YOCTO_INIT_SCRIPT="${PROJECT_DIR}/ext/poky/oe-init-build-env"
 YOCTO_TEMPLATE_DIR="${PROJECT_DIR}/meta-ota-platform/conf/templates/default"
-
 
 # ---------------------------------------------------------------------------
 # Load global project configuration
@@ -97,7 +89,6 @@ source "${PROJECT_CONFIG}" || {
     return 1
 }
 
-
 # ---------------------------------------------------------------------------
 # Load optional local secrets
 # ---------------------------------------------------------------------------
@@ -112,7 +103,6 @@ else
     _setup_warning "Optional secrets file not found: ${SECRETS_CONFIG}"
 fi
 
-
 # ---------------------------------------------------------------------------
 # Validate project configuration and source tree
 # ---------------------------------------------------------------------------
@@ -122,8 +112,7 @@ for variable_name in \
     YOCTO_BUILD_DIR \
     YOCTO_MACHINE \
     YOCTO_IMAGE \
-    MENDER_SERVER_URL
-do
+    MENDER_SERVER_URL; do
     _require_variable "${variable_name}" || return 1
 done
 
@@ -153,7 +142,6 @@ if [[ ! -f "${YOCTO_TEMPLATE_DIR}/bblayers.conf.sample" ]]; then
     return 1
 fi
 
-
 # ---------------------------------------------------------------------------
 # Resolve the requested Yocto build directory
 # ---------------------------------------------------------------------------
@@ -163,7 +151,6 @@ if [[ "${YOCTO_BUILD_DIR}" == /* ]]; then
 else
     YOCTO_BUILD_PATH="${PROJECT_DIR}/${YOCTO_BUILD_DIR}"
 fi
-
 
 # ---------------------------------------------------------------------------
 # Initialize the Yocto build environment
@@ -188,7 +175,6 @@ if [[ -z "${BUILDDIR:-}" ]]; then
     _setup_error "oe-init-build-env did not define BUILDDIR"
     return 1
 fi
-
 
 # ---------------------------------------------------------------------------
 # Export paths used by subsequent shell scripts
@@ -250,7 +236,6 @@ export DEVICE_MENDER_ID
 # These values may be provided by certificates/secrets.conf.
 export MENDER_TENANT_TOKEN
 export MENDER_ACCESS_TOKEN
-
 
 # ---------------------------------------------------------------------------
 # Print environment summary

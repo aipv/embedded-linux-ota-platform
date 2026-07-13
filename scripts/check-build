@@ -39,29 +39,23 @@
 
 set -o pipefail
 
-
 # ---------------------------------------------------------------------------
 # Logging helpers
 # ---------------------------------------------------------------------------
 
-check_build_error()
-{
+check_build_error() {
     echo "Error: $*" >&2
 }
 
-
-check_build_warning()
-{
+check_build_warning() {
     echo "Warning: $*" >&2
 }
-
 
 # ---------------------------------------------------------------------------
 # Environment and dependency checks
 # ---------------------------------------------------------------------------
 
-check_build_require_environment()
-{
+check_build_require_environment() {
     if [[ -z "${BUILD_META_FILE:-}" ]]; then
         check_build_error "BUILD_META_FILE is not set."
         check_build_error "Run 'source scripts/setup-env' before using check-build."
@@ -81,9 +75,7 @@ check_build_require_environment()
     fi
 }
 
-
-check_build_require_metadata()
-{
+check_build_require_metadata() {
     check_build_require_environment || return 1
 
     if [[ ! -f "${BUILD_META_FILE}" ]]; then
@@ -100,13 +92,11 @@ check_build_require_metadata()
     fi
 }
 
-
 # ---------------------------------------------------------------------------
 # Metadata loading
 # ---------------------------------------------------------------------------
 
-check_build_load()
-{
+check_build_load() {
     check_build_require_metadata || return 1
 
     BUILD_META_SCHEMA_VERSION="$(
@@ -167,13 +157,11 @@ check_build_load()
     export BUILD_GIT_DIRTY
 }
 
-
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
 
-check_build_validate_paths()
-{
+check_build_validate_paths() {
     if [[ "${BUILD_PROJECT_DIR}" != "${PROJECT_DIR}" ]]; then
         check_build_error "Build metadata belongs to another project directory."
         check_build_error "Metadata: ${BUILD_PROJECT_DIR}"
@@ -209,9 +197,7 @@ check_build_validate_paths()
     export BUILD_DISK_IMAGE_FILE
 }
 
-
-check_build_validate_sizes()
-{
+check_build_validate_sizes() {
     local actual_artifact_size
     local actual_disk_image_size
 
@@ -233,9 +219,7 @@ check_build_validate_sizes()
     fi
 }
 
-
-check_build_verify_checksums()
-{
+check_build_verify_checksums() {
     local actual_artifact_sha256
     local actual_disk_image_sha256
 
@@ -267,9 +251,7 @@ check_build_verify_checksums()
     fi
 }
 
-
-check_build_verify_artifact_name()
-{
+check_build_verify_artifact_name() {
     local actual_artifact_name
 
     if ! command -v mender-artifact >/dev/null 2>&1; then
@@ -279,10 +261,10 @@ check_build_verify_artifact_name()
 
     actual_artifact_name="$(
         mender-artifact read "${BUILD_ARTIFACT_FILE}" 2>/dev/null |
-        sed -n \
-            -e 's/^[[:space:]]*Name:[[:space:]]*//p' \
-            -e 's/^[[:space:]]*Artifact name:[[:space:]]*//p' |
-        head -n 1
+            sed -n \
+                -e 's/^[[:space:]]*Name:[[:space:]]*//p' \
+                -e 's/^[[:space:]]*Artifact name:[[:space:]]*//p' |
+            head -n 1
     )"
 
     if [[ -z "${actual_artifact_name}" ]]; then
@@ -302,9 +284,7 @@ check_build_verify_artifact_name()
     fi
 }
 
-
-check_build_verify()
-{
+check_build_verify() {
     check_build_load || return 1
     check_build_validate_paths || return 1
     check_build_validate_sizes || return 1
@@ -312,13 +292,11 @@ check_build_verify()
     check_build_verify_artifact_name || return 1
 }
 
-
 # ---------------------------------------------------------------------------
 # Display helpers
 # ---------------------------------------------------------------------------
 
-check_build_print()
-{
+check_build_print() {
     printf "\nLocal build\n"
     printf "===========\n"
     printf "  %-24s %s\n" "BUILD_META_FILE:" "${BUILD_META_FILE}"
@@ -346,9 +324,7 @@ check_build_print()
     printf "\n"
 }
 
-
-check_build_usage()
-{
+check_build_usage() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
@@ -373,29 +349,27 @@ After check_build_load, deployment scripts can use:
 EOF
 }
 
-
 # ---------------------------------------------------------------------------
 # Command-line entry point
 # ---------------------------------------------------------------------------
 
-check_build_main()
-{
+check_build_main() {
     local quiet=false
     local output_json=false
     local verify=false
 
     while (($# > 0)); do
         case "$1" in
-            -q|--quiet)
+            -q | --quiet)
                 quiet=true
                 ;;
-            -j|--json)
+            -j | --json)
                 output_json=true
                 ;;
-            -v|--verify)
+            -v | --verify)
                 verify=true
                 ;;
-            -h|--help)
+            -h | --help)
                 check_build_usage
                 return 0
                 ;;
@@ -432,7 +406,6 @@ check_build_main()
         fi
     fi
 }
-
 
 # Execute only when run directly. When sourced, expose the functions above.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

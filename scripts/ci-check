@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+SHELL_SCRIPTS=(
+    scripts/setup-env
+    scripts/build-image
+    scripts/check-build
+    scripts/deploy-build
+    scripts/deploy-status
+    scripts/validate-build
+    scripts/ota-deployment
+    scripts/test-pipeline
+    scripts/ci-check
+)
+
+check_optional_tool() {
+    local tool="$1"
+
+    if command -v "${tool}" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "Warning: ${tool} is not installed. Skipping related checks."
+    return 1
+}
+
+echo "Checking Bash syntax..."
+
+for script in "${SHELL_SCRIPTS[@]}"; do
+    bash -n "${PROJECT_DIR}/${script}"
+done
+
+if check_optional_tool shellcheck; then
+    echo "Running ShellCheck..."
+    shellcheck \
+        --shell=bash \
+        --severity=warning \
+        "${SHELL_SCRIPTS[@]/#/${PROJECT_DIR}/}"
+fi
+
+if check_optional_tool shfmt; then
+    echo "Checking shell formatting..."
+
+    if ! shfmt \
+        -d \
+        -i 4 \
+        -ci \
+        "${SHELL_SCRIPTS[@]/#/${PROJECT_DIR}/}" >/dev/null; then
+        echo
+        echo "Formatting differences detected."
+        echo
+        echo "Run:"
+        echo
+        echo "    format"
+        echo
+        exit 1
+    fi
+fi
+
+echo "Checking forbidden committed files..."
+
+for path in \
+    certificates/secrets.conf \
+    certificates/mender.crt; do
+    if git -C "${PROJECT_DIR}" ls-files --error-unmatch "${path}" >/dev/null 2>&1; then
+        echo "Error: local file is tracked by Git: ${path}" >&2
+        exit 1
+    fi
+done
+
+echo "Checking sample files..."
+
+for path in \
+    project.conf \
+    certificates/secrets.conf.sample \
+    certificates/mender.crt.sample \
+    meta-ota-platform/conf/templates/default/project.inc.sample; do
+    if [[ ! -f "${PROJECT_DIR}/${path}" ]]; then
+        echo "Error: required file missing: ${path}" >&2
+        exit 1
+    fi
+done
+
+echo "Checking for embedded local paths..."
+
+FILES_TO_CHECK=(
+    "${PROJECT_DIR}/meta-ota-platform/conf/templates/default/project.inc.sample"
+    "${PROJECT_DIR}/meta-ota-platform/conf/templates/default/local.conf.sample"
+    "${PROJECT_DIR}/scripts/setup-env"
+    "${PROJECT_DIR}/scripts/build-image"
+)
+
+path_check_output="$(
+    grep \
+        --line-number \
+        -E '/home/[^/]+/|/Users/[^/]+/' \
+        "${FILES_TO_CHECK[@]}" ||
+        true
+)"
+
+if [[ -n "${path_check_output}" ]]; then
+    printf '%s\n' "${path_check_output}"
+    echo "Error: host-specific absolute path found." >&2
+    exit 1
+fi
+
+echo
+echo "All repository checks passed."

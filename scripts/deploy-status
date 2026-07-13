@@ -14,8 +14,8 @@ set -euo pipefail
 INTERVAL=15
 TIMEOUT=1800
 
-usage(){
-cat <<EOF
+usage() {
+    cat <<EOF
 Usage: $(basename "$0") [options]
 
 Options:
@@ -26,12 +26,24 @@ EOF
 }
 
 while (($#)); do
- case "$1" in
-   -i|--interval) INTERVAL="$2"; shift 2;;
-   -t|--timeout) TIMEOUT="$2"; shift 2;;
-   -h|--help) usage; exit 0;;
-   *) echo "Unknown option: $1" >&2; exit 1;;
- esac
+    case "$1" in
+        -i | --interval)
+            INTERVAL="$2"
+            shift 2
+            ;;
+        -t | --timeout)
+            TIMEOUT="$2"
+            shift 2
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
 done
 
 : "${SCRIPTS_DIR:?Run 'source scripts/setup-env' first}"
@@ -46,16 +58,16 @@ API="${MENDER_SERVER_URL%/}/api/management/v1/deployments/deployments"
 echo "Searching deployment for artifact: ${BUILD_ARTIFACT_NAME}"
 
 DEPLOYMENT_ID="$(
-curl -fsS \
- -H "Authorization: Bearer ${MENDER_ACCESS_TOKEN}" \
- "${API}?per_page=20" |
-jq -r --arg a "${BUILD_ARTIFACT_NAME}" '
+    curl -fsS \
+        -H "Authorization: Bearer ${MENDER_ACCESS_TOKEN}" \
+        "${API}?per_page=20" |
+        jq -r --arg a "${BUILD_ARTIFACT_NAME}" '
  .[]? | select(.artifact_name==$a) | .id' | head -n1
 )"
 
 if [[ -z "${DEPLOYMENT_ID}" ]]; then
- echo "Deployment not found for artifact ${BUILD_ARTIFACT_NAME}" >&2
- exit 1
+    echo "Deployment not found for artifact ${BUILD_ARTIFACT_NAME}" >&2
+    exit 1
 fi
 
 echo "Deployment ID : ${DEPLOYMENT_ID}"
@@ -64,39 +76,39 @@ echo
 start=$(date +%s)
 
 while :; do
- now=$(date +%s)
- if (( now-start > TIMEOUT )); then
-   echo "Timeout waiting for deployment."
-   exit 1
- fi
+    now=$(date +%s)
+    if ((now - start > TIMEOUT)); then
+        echo "Timeout waiting for deployment."
+        exit 1
+    fi
 
- json=$(curl -fsS \
-   -H "Authorization: Bearer ${MENDER_ACCESS_TOKEN}" \
-   "${API}/${DEPLOYMENT_ID}")
+    json=$(curl -fsS \
+        -H "Authorization: Bearer ${MENDER_ACCESS_TOKEN}" \
+        "${API}/${DEPLOYMENT_ID}")
 
- status=$(jq -r '.status // "unknown"' <<<"$json")
- finished=$(jq -r '.finished // false' <<<"$json")
+    status=$(jq -r '.status // "unknown"' <<<"$json")
+    finished=$(jq -r '.finished // false' <<<"$json")
 
- total=$(jq -r '.device_count // .devices.total // 0' <<<"$json")
- success=$(jq -r '.device_statuses.success // .statistics.success // 0' <<<"$json")
- failure=$(jq -r '.device_statuses.failure // .statistics.failure // 0' <<<"$json")
- pending=$(jq -r '.device_statuses.pending // .statistics.pending // 0' <<<"$json")
- inprogress=$(jq -r '.device_statuses.inprogress // .statistics.inprogress // 0' <<<"$json")
+    total=$(jq -r '.device_count // .devices.total // 0' <<<"$json")
+    success=$(jq -r '.device_statuses.success // .statistics.success // 0' <<<"$json")
+    failure=$(jq -r '.device_statuses.failure // .statistics.failure // 0' <<<"$json")
+    pending=$(jq -r '.device_statuses.pending // .statistics.pending // 0' <<<"$json")
+    inprogress=$(jq -r '.device_statuses.inprogress // .statistics.inprogress // 0' <<<"$json")
 
- printf "\r%-12s total=%-3s success=%-3s running=%-3s pending=%-3s failed=%-3s" \
-   "$status" "$total" "$success" "$inprogress" "$pending" "$failure"
+    printf "\r%-12s total=%-3s success=%-3s running=%-3s pending=%-3s failed=%-3s" \
+        "$status" "$total" "$success" "$inprogress" "$pending" "$failure"
 
- if [[ "$finished" == "true" ]] || [[ "$status" =~ ^(finished|successful|success)$ ]]; then
-    echo
-    echo "Deployment completed."
-    exit 0
- fi
+    if [[ "$finished" == "true" ]] || [[ "$status" =~ ^(finished|successful|success)$ ]]; then
+        echo
+        echo "Deployment completed."
+        exit 0
+    fi
 
- if [[ "$status" =~ ^(aborted|failed)$ ]]; then
-    echo
-    echo "Deployment failed."
-    exit 1
- fi
+    if [[ "$status" =~ ^(aborted|failed)$ ]]; then
+        echo
+        echo "Deployment failed."
+        exit 1
+    fi
 
- sleep "$INTERVAL"
+    sleep "$INTERVAL"
 done
