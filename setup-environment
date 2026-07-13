@@ -335,6 +335,23 @@ fi
 
 
 # ---------------------------------------------------------------------------
+# Compute target file paths
+# ---------------------------------------------------------------------------
+
+# DEPLOY_DIR_IMAGE is not exported by oe-init-build-env, compute from BUILDDIR
+if [[ -n "${BUILDDIR:-}" ]] && [[ -n "${YOCTO_MACHINE:-}" ]]; then
+    DEPLOY_DIR_IMAGE="${BUILDDIR}/tmp/deploy/images/${YOCTO_MACHINE}"
+fi
+
+if [[ -n "${DEPLOY_DIR_IMAGE:-}" ]]; then
+    TARGET_IMAGE_FILE="${DEPLOY_DIR_IMAGE}/${YOCTO_IMAGE}-${YOCTO_MACHINE}.sdimg"
+    TARGET_MENDER_FILE="${DEPLOY_DIR_IMAGE}/${YOCTO_IMAGE}-${YOCTO_MACHINE}.mender"
+    export TARGET_IMAGE_FILE
+    export TARGET_MENDER_FILE
+fi
+
+
+# ---------------------------------------------------------------------------
 # Print generated environment
 # ---------------------------------------------------------------------------
 
@@ -379,6 +396,11 @@ if [[ -n "${MENDER_ACCESS_TOKEN:-}" ]]; then
 else
     printf "  %-28s %s\n" "MENDER_ACCESS_TOKEN:" "<not configured>"
 fi
+
+echo
+echo "Target files:"
+_print_environment_variable TARGET_IMAGE_FILE
+_print_environment_variable TARGET_MENDER_FILE
 
 echo
 echo "Test device:"
