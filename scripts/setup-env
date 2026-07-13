@@ -3,7 +3,7 @@
 # Embedded Linux OTA Platform environment setup
 #
 # Usage:
-#   source setup-environment
+#   source scripts/setup-env
 #
 # Responsibilities:
 #   1. Load project.conf and optional local secrets.
@@ -18,8 +18,8 @@
 # ---------------------------------------------------------------------------
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    echo "Error: setup-environment must be sourced, not executed." >&2
-    echo "Usage: source setup-environment" >&2
+    echo "Error: setup-env must be sourced, not executed." >&2
+    echo "Usage: source scripts/setup-env" >&2
     exit 1
 fi
 
@@ -71,21 +71,6 @@ _prepend_path_once()
 # ---------------------------------------------------------------------------
 # Locate the project root
 # ---------------------------------------------------------------------------
-
-_SETUP_ENV_PATH="${BASH_SOURCE[0]}"
-
-while [[ -L "${_SETUP_ENV_PATH}" ]]; do
-    _SETUP_ENV_DIR="$(
-        cd -P "$(dirname "${_SETUP_ENV_PATH}")" >/dev/null 2>&1 &&
-        pwd
-    )" || return 1
-
-    _SETUP_ENV_PATH="$(readlink "${_SETUP_ENV_PATH}")"
-
-    if [[ "${_SETUP_ENV_PATH}" != /* ]]; then
-        _SETUP_ENV_PATH="${_SETUP_ENV_DIR}/${_SETUP_ENV_PATH}"
-    fi
-done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -333,6 +318,5 @@ done < <(
 echo
 
 # Do not leave setup-only implementation variables in the caller's shell.
-unset _SETUP_ENV_PATH _SETUP_ENV_DIR
 unset -f _setup_error _setup_warning _require_variable
 unset -f _print_environment_variable _prepend_path_once

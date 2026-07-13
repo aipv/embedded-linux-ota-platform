@@ -24,7 +24,7 @@ embedded-linux-ota-platform/
 ├── ext/
 ├── meta-ota-platform/
 ├── scripts/
-├── project.conf.sample
+├── project.conf
 └── README.md
 ```
 
