@@ -1,0 +1,429 @@
+#!/usr/bin/env bash
+#
+# ota-deployment
+#
+# Complete OTA workflow:
+#   1. Validate the latest local build
+#   2. Upload the Artifact and create a deployment
+#   3. Wait for the deployment to complete
+#   4. Validate the running build over SSH
+#
+# Prerequisite:
+#   source scripts/setup-env
+#
+# Usage:
+#   ota-deployment [options]
+#
+# Options:
+#   -d, --device-id <id>        Override DEVICE_MENDER_ID
+#   -H, --host <host>           Override DEVICE_IP_ADDRESS
+#   -u, --user <user>           Override DEVICE_SSH_USER
+#   -n, --name <name>           Override deployment name
+#   -i, --interval <seconds>    Deployment polling interval. Default: 15
+#   -t, --timeout <seconds>     Deployment timeout. Default: 1800
+#   -s, --service <name>        Validate a systemd service after deployment.
+#                               May be specified multiple times.
+#       --skip-upload           Do not upload the Artifact
+#       --skip-validation       Do not run SSH validation
+#       --refresh-host-key      Refresh the stored SSH host key before validation
+#   -y, --yes                   Do not ask for confirmation
+#   -h, --help                  Show this help
+#
+
+set -euo pipefail
+
+
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+
+DEVICE_ID="${DEVICE_MENDER_ID:-}"
+DEVICE_HOST="${DEVICE_IP_ADDRESS:-}"
+DEVICE_USER="${DEVICE_SSH_USER:-}"
+DEPLOYMENT_NAME=""
+POLL_INTERVAL=15
+DEPLOYMENT_TIMEOUT=1800
+SKIP_UPLOAD=false
+SKIP_VALIDATION=false
+REFRESH_HOST_KEY=true
+ASSUME_YES=false
+REQUIRED_SERVICES=()
+
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+
+line()
+{
+    printf '%*s\n' 64 '' | tr ' ' '='
+}
+
+
+section_line()
+{
+    printf '%*s\n' 64 '' | tr ' ' '-'
+}
+
+
+banner()
+{
+    echo
+    line
+    printf "%32s\n" "Embedded Linux OTA Deployment"
+    line
+    echo
+}
+
+
+step()
+{
+    local number="$1"
+    local total="$2"
+    local title="$3"
+
+    echo
+    section_line
+    printf "Step %s/%s  %s\n" "${number}" "${total}" "${title}"
+    section_line
+    echo
+}
+
+
+success()
+{
+    echo "OK: $*"
+}
+
+
+error()
+{
+    echo "Error: $*" >&2
+}
+
+
+usage()
+{
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Run the complete OTA deployment workflow.
+
+Options:
+  -d, --device-id <id>        Override DEVICE_MENDER_ID
+  -H, --host <host>           Override DEVICE_IP_ADDRESS
+  -u, --user <user>           Override DEVICE_SSH_USER
+  -n, --name <name>           Override deployment name
+  -i, --interval <seconds>    Polling interval. Default: 15
+  -t, --timeout <seconds>     Deployment timeout. Default: 1800
+  -s, --service <name>        Validate a systemd service after deployment.
+                              May be specified multiple times.
+      --skip-upload           Skip Artifact upload
+      --skip-validation       Skip SSH validation
+      --refresh-host-key      Refresh the stored SSH host key before validation
+  -y, --yes                   Do not ask for confirmation
+  -h, --help                  Show this help
+
+Examples:
+  $(basename "$0")
+  $(basename "$0") --yes
+  $(basename "$0") --device-id DEVICE_ID --host 192.168.0.82
+  $(basename "$0") --service my-application.service
+  $(basename "$0") --skip-upload --refresh-host-key
+EOF
+}
+
+
+require_variable()
+{
+    local variable_name="$1"
+
+    if [[ -z "${!variable_name:-}" ]]; then
+        error "${variable_name} is not set."
+        return 1
+    fi
+}
+
+
+format_duration()
+{
+    local seconds="$1"
+    local minutes=$((seconds / 60))
+    local remaining=$((seconds % 60))
+
+    if ((minutes > 0)); then
+        printf '%dm %ds' "${minutes}" "${remaining}"
+    else
+        printf '%ds' "${remaining}"
+    fi
+}
+
+
+# ---------------------------------------------------------------------------
+# Parse options
+# ---------------------------------------------------------------------------
+
+while (($# > 0)); do
+    case "$1" in
+        -d|--device-id)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            DEVICE_ID="$2"
+            shift 2
+            ;;
+        -H|--host)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            DEVICE_HOST="$2"
+            shift 2
+            ;;
+        -u|--user)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            DEVICE_USER="$2"
+            shift 2
+            ;;
+        -n|--name)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            DEPLOYMENT_NAME="$2"
+            shift 2
+            ;;
+        -i|--interval)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            POLL_INTERVAL="$2"
+            shift 2
+            ;;
+        -t|--timeout)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            DEPLOYMENT_TIMEOUT="$2"
+            shift 2
+            ;;
+        -s|--service)
+            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            REQUIRED_SERVICES+=("$2")
+            shift 2
+            ;;
+        --skip-upload)
+            SKIP_UPLOAD=true
+            shift
+            ;;
+        --skip-validation)
+            SKIP_VALIDATION=true
+            shift
+            ;;
+        --refresh-host-key)
+            REFRESH_HOST_KEY=true
+            shift
+            ;;
+        -y|--yes)
+            ASSUME_YES=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+
+# ---------------------------------------------------------------------------
+# Validate environment
+# ---------------------------------------------------------------------------
+
+require_variable SCRIPTS_DIR || {
+    error "Run 'source scripts/setup-env' first."
+    exit 1
+}
+
+for script_name in check-build deploy-build deploy-status validate-build; do
+    if [[ ! -x "${SCRIPTS_DIR}/${script_name}" ]]; then
+        error "Required command is missing or not executable:"
+        error "  ${SCRIPTS_DIR}/${script_name}"
+        exit 1
+    fi
+done
+
+if [[ -z "${DEVICE_ID}" ]]; then
+    error "DEVICE_MENDER_ID is not set."
+    exit 1
+fi
+
+if [[ "${SKIP_VALIDATION}" != true ]]; then
+    if [[ -z "${DEVICE_HOST}" ]]; then
+        error "DEVICE_IP_ADDRESS is not set."
+        exit 1
+    fi
+
+    if [[ -z "${DEVICE_USER}" ]]; then
+        error "DEVICE_SSH_USER is not set."
+        exit 1
+    fi
+fi
+
+if ! [[ "${POLL_INTERVAL}" =~ ^[0-9]+$ ]] || ((POLL_INTERVAL < 1)); then
+    error "Invalid polling interval: ${POLL_INTERVAL}"
+    exit 1
+fi
+
+if ! [[ "${DEPLOYMENT_TIMEOUT}" =~ ^[0-9]+$ ]] || ((DEPLOYMENT_TIMEOUT < 1)); then
+    error "Invalid deployment timeout: ${DEPLOYMENT_TIMEOUT}"
+    exit 1
+fi
+
+
+# ---------------------------------------------------------------------------
+# Load local build information
+# ---------------------------------------------------------------------------
+
+# shellcheck source=/dev/null
+source "${SCRIPTS_DIR}/check-build"
+
+check_build_verify
+
+if [[ -z "${DEPLOYMENT_NAME}" ]]; then
+    DEPLOYMENT_NAME="deploy-${BUILD_ARTIFACT_NAME}"
+fi
+
+
+# ---------------------------------------------------------------------------
+# Summary and confirmation
+# ---------------------------------------------------------------------------
+
+banner
+
+echo "Build"
+echo "-----"
+printf "  %-24s %s\n" "PROJECT:" "${BUILD_PROJECT_NAME}"
+printf "  %-24s %s\n" "RELEASE:" "${BUILD_RELEASE}"
+printf "  %-24s %s\n" "BUILD_ID:" "${BUILD_ID}"
+printf "  %-24s %s\n" "ARTIFACT:" "${BUILD_ARTIFACT_NAME}"
+printf "  %-24s %s\n" "ARTIFACT_FILE:" "${BUILD_ARTIFACT_FILE}"
+
+echo
+echo "Target"
+echo "------"
+printf "  %-24s %s\n" "MENDER_SERVER_URL:" "${MENDER_SERVER_URL}"
+printf "  %-24s %s\n" "DEVICE_MENDER_ID:" "${DEVICE_ID}"
+printf "  %-24s %s\n" "DEVICE_SSH:" "${DEVICE_USER}@${DEVICE_HOST}"
+printf "  %-24s %s\n" "DEPLOYMENT_NAME:" "${DEPLOYMENT_NAME}"
+printf "  %-24s %s\n" "SKIP_UPLOAD:" "${SKIP_UPLOAD}"
+printf "  %-24s %s\n" "SKIP_VALIDATION:" "${SKIP_VALIDATION}"
+
+echo
+
+if [[ "${ASSUME_YES}" != true ]]; then
+    read -r -p "Start OTA deployment? [y/N] " answer
+
+    if [[ ! "${answer}" =~ ^[Yy]$ ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+fi
+
+START_TIME="$(date +%s)"
+
+if [[ "${SKIP_VALIDATION}" == true ]]; then
+    TOTAL_STEPS=3
+else
+    TOTAL_STEPS=4
+fi
+
+
+# ---------------------------------------------------------------------------
+# Step 1: Validate build
+# ---------------------------------------------------------------------------
+
+step 1 "${TOTAL_STEPS}" "Validate local build"
+check-build --verify --quiet
+success "Local build verification passed."
+
+
+# ---------------------------------------------------------------------------
+# Step 2: Upload and create deployment
+# ---------------------------------------------------------------------------
+
+step 2 "${TOTAL_STEPS}" "Upload Artifact and create deployment"
+
+deploy_args=(
+    --device-id "${DEVICE_ID}"
+    --name "${DEPLOYMENT_NAME}"
+    --yes
+    --verify
+)
+
+if [[ "${SKIP_UPLOAD}" == true ]]; then
+    deploy_args+=(--skip-upload)
+fi
+
+deploy-build "${deploy_args[@]}"
+success "Deployment request submitted."
+
+
+# ---------------------------------------------------------------------------
+# Step 3: Wait for completion
+# ---------------------------------------------------------------------------
+
+step 3 "${TOTAL_STEPS}" "Wait for OTA update"
+
+deploy-status \
+    --interval "${POLL_INTERVAL}" \
+    --timeout "${DEPLOYMENT_TIMEOUT}"
+
+success "OTA update completed."
+
+
+# ---------------------------------------------------------------------------
+# Step 4: Validate device
+# ---------------------------------------------------------------------------
+
+if [[ "${SKIP_VALIDATION}" != true ]]; then
+    step 4 "${TOTAL_STEPS}" "Validate target device"
+
+    validate_args=(
+        --host "${DEVICE_HOST}"
+        --user "${DEVICE_USER}"
+    )
+
+    if [[ "${REFRESH_HOST_KEY}" == true ]]; then
+        validate_args+=(--refresh-host-key)
+    fi
+
+    for service_name in "${REQUIRED_SERVICES[@]}"; do
+        validate_args+=(--service "${service_name}")
+    done
+
+    validate-build "${validate_args[@]}"
+    success "Device validation passed."
+fi
+
+
+# ---------------------------------------------------------------------------
+# Final summary
+# ---------------------------------------------------------------------------
+
+END_TIME="$(date +%s)"
+ELAPSED="$((END_TIME - START_TIME))"
+
+echo
+line
+echo "OTA Deployment completed successfully"
+line
+printf "  %-24s %s\n" "PROJECT:" "${BUILD_PROJECT_NAME}"
+printf "  %-24s %s\n" "RELEASE:" "${BUILD_RELEASE}"
+printf "  %-24s %s\n" "BUILD_ID:" "${BUILD_ID}"
+printf "  %-24s %s\n" "ARTIFACT:" "${BUILD_ARTIFACT_NAME}"
+printf "  %-24s %s\n" "DEVICE_MENDER_ID:" "${DEVICE_ID}"
+
+if [[ "${SKIP_VALIDATION}" != true ]]; then
+    printf "  %-24s %s\n" "DEVICE_SSH:" "${DEVICE_USER}@${DEVICE_HOST}"
+    printf "  %-24s %s\n" "VALIDATION:" "PASS"
+else
+    printf "  %-24s %s\n" "VALIDATION:" "SKIPPED"
+fi
+
+printf "  %-24s %s\n" "ELAPSED_TIME:" "$(format_duration "${ELAPSED}")"
+line
+echo
