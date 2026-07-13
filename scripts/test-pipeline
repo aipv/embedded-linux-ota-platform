@@ -42,7 +42,6 @@
 
 set -euo pipefail
 
-
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
@@ -66,25 +65,19 @@ REQUIRED_SERVICES=()
 PIPELINE_START="$(date +%s)"
 CURRENT_STAGE="initialization"
 
-
 # ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
 
-line()
-{
+line() {
     printf '%*s\n' 72 '' | tr ' ' '='
 }
 
-
-section_line()
-{
+section_line() {
     printf '%*s\n' 72 '' | tr ' ' '-'
 }
 
-
-banner()
-{
+banner() {
     echo
     line
     printf "%36s\n" "Embedded Linux OTA Test Pipeline"
@@ -92,9 +85,7 @@ banner()
     echo
 }
 
-
-stage()
-{
+stage() {
     local number="$1"
     local total="$2"
     local title="$3"
@@ -108,21 +99,15 @@ stage()
     echo
 }
 
-
-success()
-{
+success() {
     echo "OK: $*"
 }
 
-
-error()
-{
+error() {
     echo "Error: $*" >&2
 }
 
-
-format_duration()
-{
+format_duration() {
     local seconds="$1"
     local minutes=$((seconds / 60))
     local remaining=$((seconds % 60))
@@ -134,9 +119,7 @@ format_duration()
     fi
 }
 
-
-usage()
-{
+usage() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
@@ -174,9 +157,7 @@ Examples:
 EOF
 }
 
-
-require_variable()
-{
+require_variable() {
     local variable_name="$1"
 
     if [[ -z "${!variable_name:-}" ]]; then
@@ -185,9 +166,7 @@ require_variable()
     fi
 }
 
-
-run_stage()
-{
+run_stage() {
     local stage_name="$1"
     shift
 
@@ -195,8 +174,8 @@ run_stage()
         local safe_name
         safe_name="$(
             printf '%s' "${stage_name}" |
-            tr '[:upper:] ' '[:lower:]-' |
-            tr -cd 'a-z0-9._-'
+                tr '[:upper:] ' '[:lower:]-' |
+                tr -cd 'a-z0-9._-'
         )"
 
         "$@" 2>&1 | tee "${LOG_DIR}/${safe_name}.log"
@@ -205,9 +184,7 @@ run_stage()
     fi
 }
 
-
-on_error()
-{
+on_error() {
     local exit_code=$?
     local end_time
     local elapsed
@@ -233,55 +210,81 @@ on_error()
 
 trap on_error ERR
 
-
 # ---------------------------------------------------------------------------
 # Parse options
 # ---------------------------------------------------------------------------
 
 while (($# > 0)); do
     case "$1" in
-        -r|--release)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -r | --release)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             RELEASE="$2"
             shift 2
             ;;
-        -b|--build-id)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -b | --build-id)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             BUILD_ID="$2"
             shift 2
             ;;
-        -d|--device-id)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -d | --device-id)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             DEVICE_ID="$2"
             shift 2
             ;;
-        -H|--host)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -H | --host)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             DEVICE_HOST="$2"
             shift 2
             ;;
-        -u|--user)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -u | --user)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             DEVICE_USER="$2"
             shift 2
             ;;
-        -n|--name)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -n | --name)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             DEPLOYMENT_NAME="$2"
             shift 2
             ;;
-        -i|--interval)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -i | --interval)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             POLL_INTERVAL="$2"
             shift 2
             ;;
-        -t|--timeout)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -t | --timeout)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             DEPLOYMENT_TIMEOUT="$2"
             shift 2
             ;;
-        -s|--service)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -s | --service)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             REQUIRED_SERVICES+=("$2")
             shift 2
             ;;
@@ -301,16 +304,19 @@ while (($# > 0)); do
             REFRESH_HOST_KEY=true
             shift
             ;;
-        -y|--yes)
+        -y | --yes)
             ASSUME_YES=true
             shift
             ;;
         --log-dir)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             LOG_DIR="$2"
             shift 2
             ;;
-        -h|--help)
+        -h | --help)
             usage
             exit 0
             ;;
@@ -321,7 +327,6 @@ while (($# > 0)); do
             ;;
     esac
 done
-
 
 # ---------------------------------------------------------------------------
 # Validate environment
@@ -360,7 +365,6 @@ if ! [[ "${DEPLOYMENT_TIMEOUT}" =~ ^[0-9]+$ ]] || ((DEPLOYMENT_TIMEOUT < 1)); th
     error "Invalid deployment timeout: ${DEPLOYMENT_TIMEOUT}"
     exit 1
 fi
-
 
 # ---------------------------------------------------------------------------
 # Pipeline summary
@@ -407,7 +411,6 @@ else
     TOTAL_STAGES=3
 fi
 
-
 # ---------------------------------------------------------------------------
 # Stage 1: Build
 # ---------------------------------------------------------------------------
@@ -423,7 +426,6 @@ fi
 run_stage "build-image" build-image "${build_args[@]}"
 success "Yocto image build completed."
 
-
 # ---------------------------------------------------------------------------
 # Stage 2: Verify build
 # ---------------------------------------------------------------------------
@@ -432,7 +434,6 @@ stage 2 "${TOTAL_STAGES}" "Verify local build"
 
 run_stage "check-build" check-build --verify
 success "Local build verification passed."
-
 
 # ---------------------------------------------------------------------------
 # Stage 3: Deploy and validate
@@ -473,7 +474,6 @@ if [[ "${SKIP_DEPLOYMENT}" != true ]]; then
     run_stage "ota-deployment" ota-deployment "${ota_args[@]}"
     success "OTA deployment and validation completed."
 fi
-
 
 # ---------------------------------------------------------------------------
 # Final summary

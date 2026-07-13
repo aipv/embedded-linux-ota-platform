@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+SHELL_SCRIPTS=(
+    "${SCRIPT_DIR}/setup-env"
+    "${SCRIPT_DIR}/build-image"
+    "${SCRIPT_DIR}/check-build"
+    "${SCRIPT_DIR}/deploy-build"
+    "${SCRIPT_DIR}/deploy-status"
+    "${SCRIPT_DIR}/validate-build"
+    "${SCRIPT_DIR}/ota-deployment"
+    "${SCRIPT_DIR}/test-pipeline"
+    "${SCRIPT_DIR}/ci-shell-check"
+    "${SCRIPT_DIR}/ci-yocto-check"
+    "${SCRIPT_DIR}/ci-build-check"
+    "${SCRIPT_DIR}/format"
+)
+
+existing_scripts=()
+
+for script in "${SHELL_SCRIPTS[@]}"; do
+    if [[ -f "${script}" ]]; then
+        existing_scripts+=("${script}")
+    fi
+done
+
+if ! command -v shfmt >/dev/null 2>&1; then
+    echo "Error: shfmt is not installed." >&2
+    echo "Install it with:" >&2
+    echo "  sudo apt install shfmt" >&2
+    exit 1
+fi
+
+echo "Formatting shell scripts..."
+
+shfmt \
+    -w \
+    -i 4 \
+    -ci \
+    "${existing_scripts[@]}"
+
+echo "Shell formatting completed."

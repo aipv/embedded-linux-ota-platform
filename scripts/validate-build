@@ -25,7 +25,6 @@
 
 set -euo pipefail
 
-
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
@@ -39,27 +38,21 @@ REFRESH_HOST_KEY=false
 QUIET=false
 REQUIRED_SERVICES=()
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-error()
-{
+error() {
     echo "Error: $*" >&2
 }
 
-
-info()
-{
+info() {
     if [[ "${QUIET}" != true ]]; then
         echo "$*"
     fi
 }
 
-
-usage()
-{
+usage() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
@@ -87,9 +80,7 @@ Examples:
 EOF
 }
 
-
-require_variable()
-{
+require_variable() {
     local variable_name="$1"
 
     if [[ -z "${!variable_name:-}" ]]; then
@@ -98,20 +89,22 @@ require_variable()
     fi
 }
 
+run_remote() {
+    local remote_command="$1"
 
-run_remote()
-{
-    ssh "${SSH_OPTIONS[@]}" "${DEVICE_USER}@${DEVICE_HOST}" "$@"
+    # Remote commands are intentionally assembled by this script.
+    # shellcheck disable=SC2029
+    ssh \
+        "${SSH_OPTIONS[@]}" \
+        "${DEVICE_USER}@${DEVICE_HOST}" \
+        "${remote_command}"
 }
 
-
-check_remote_command()
-{
+check_remote_command() {
     local command_name="$1"
 
     run_remote "command -v '${command_name}' >/dev/null 2>&1"
 }
-
 
 # ---------------------------------------------------------------------------
 # Parse options
@@ -119,7 +112,7 @@ check_remote_command()
 
 while (($# > 0)); do
     case "$1" in
-        -H|--host)
+        -H | --host)
             [[ $# -ge 2 ]] || {
                 error "$1 requires an argument."
                 exit 1
@@ -127,7 +120,7 @@ while (($# > 0)); do
             DEVICE_HOST="$2"
             shift 2
             ;;
-        -u|--user)
+        -u | --user)
             [[ $# -ge 2 ]] || {
                 error "$1 requires an argument."
                 exit 1
@@ -135,7 +128,7 @@ while (($# > 0)); do
             DEVICE_USER="$2"
             shift 2
             ;;
-        -p|--port)
+        -p | --port)
             [[ $# -ge 2 ]] || {
                 error "$1 requires an argument."
                 exit 1
@@ -143,7 +136,7 @@ while (($# > 0)); do
             SSH_PORT="$2"
             shift 2
             ;;
-        -t|--timeout)
+        -t | --timeout)
             [[ $# -ge 2 ]] || {
                 error "$1 requires an argument."
                 exit 1
@@ -151,7 +144,7 @@ while (($# > 0)); do
             SSH_TIMEOUT="$2"
             shift 2
             ;;
-        -s|--service)
+        -s | --service)
             [[ $# -ge 2 ]] || {
                 error "$1 requires an argument."
                 exit 1
@@ -167,11 +160,11 @@ while (($# > 0)); do
             REFRESH_HOST_KEY=true
             shift
             ;;
-        -q|--quiet)
+        -q | --quiet)
             QUIET=true
             shift
             ;;
-        -h|--help)
+        -h | --help)
             usage
             exit 0
             ;;
@@ -182,7 +175,6 @@ while (($# > 0)); do
             ;;
     esac
 done
-
 
 # ---------------------------------------------------------------------------
 # Validate local environment and load build metadata
@@ -235,7 +227,6 @@ check_build_load
 check_build_validate_paths
 check_build_validate_sizes
 
-
 # ---------------------------------------------------------------------------
 # Optional SSH host-key refresh
 # ---------------------------------------------------------------------------
@@ -262,7 +253,6 @@ if [[ "${REFRESH_HOST_KEY}" == true ]]; then
     fi
 fi
 
-
 # ---------------------------------------------------------------------------
 # SSH configuration
 # ---------------------------------------------------------------------------
@@ -275,7 +265,6 @@ SSH_OPTIONS=(
     -o ServerAliveCountMax=2
     -o StrictHostKeyChecking=accept-new
 )
-
 
 # ---------------------------------------------------------------------------
 # Device checks
@@ -292,8 +281,7 @@ info "Checking SSH connectivity..."
 
 ssh_error_file="$(mktemp)"
 
-cleanup_ssh_error()
-{
+cleanup_ssh_error() {
     rm -f "${ssh_error_file}"
 }
 
@@ -303,8 +291,7 @@ if ! run_remote "true" 2>"${ssh_error_file}"; then
     if grep -q \
         -e 'REMOTE HOST IDENTIFICATION HAS CHANGED' \
         -e 'Host key verification failed' \
-        "${ssh_error_file}"
-    then
+        "${ssh_error_file}"; then
         cat "${ssh_error_file}" >&2
         error "The stored SSH host key does not match the device."
         error "This commonly happens after reflashing the device."
@@ -324,7 +311,6 @@ trap - EXIT
 
 info "SSH connectivity: OK"
 
-
 # System identity and uptime.
 DEVICE_HOSTNAME="$(run_remote "hostname 2>/dev/null || cat /etc/hostname")"
 DEVICE_KERNEL="$(run_remote "uname -srmo")"
@@ -336,7 +322,6 @@ info "------------------"
 info "  HOSTNAME:              ${DEVICE_HOSTNAME}"
 info "  KERNEL:                ${DEVICE_KERNEL}"
 info "  UPTIME:                ${DEVICE_UPTIME}"
-
 
 # systemd overall state.
 SYSTEM_STATE="unknown"
@@ -366,7 +351,6 @@ else
     info "  SYSTEMD_STATE:         <systemctl unavailable>"
 fi
 
-
 # Mender service.
 MENDER_SERVICE=""
 
@@ -374,12 +358,10 @@ if check_remote_command systemctl; then
     for service_name in \
         mender-client.service \
         mender-updated.service \
-        mender.service
-    do
+        mender.service; do
         if run_remote \
             "systemctl list-unit-files '${service_name}' --no-legend 2>/dev/null |
-             grep -q '^${service_name}'"
-        then
+             grep -q '^${service_name}'"; then
             MENDER_SERVICE="${service_name}"
             break
         fi
@@ -401,7 +383,6 @@ if check_remote_command systemctl; then
     fi
 fi
 
-
 # Running Artifact name.
 if [[ "${SKIP_ARTIFACT_CHECK}" != true ]]; then
     RUNNING_ARTIFACT_NAME=""
@@ -409,27 +390,27 @@ if [[ "${SKIP_ARTIFACT_CHECK}" != true ]]; then
     if run_remote "command -v mender-show-artifact >/dev/null 2>&1"; then
         RUNNING_ARTIFACT_NAME="$(
             run_remote "mender-show-artifact 2>/dev/null" |
-            tr -d '\r' |
-            tail -n 1
+                tr -d '\r' |
+                tail -n 1
         )"
     elif run_remote "command -v mender-update >/dev/null 2>&1"; then
         RUNNING_ARTIFACT_NAME="$(
             run_remote "mender-update show-artifact 2>/dev/null" |
-            tr -d '\r' |
-            tail -n 1
+                tr -d '\r' |
+                tail -n 1
         )"
     elif run_remote "command -v mender >/dev/null 2>&1"; then
         RUNNING_ARTIFACT_NAME="$(
             run_remote "mender show-artifact 2>/dev/null" |
-            tr -d '\r' |
-            tail -n 1
+                tr -d '\r' |
+                tail -n 1
         )"
     elif run_remote "test -r /etc/mender/artifact_info"; then
         RUNNING_ARTIFACT_NAME="$(
             run_remote \
                 "sed -n 's/^artifact_name=//p' /etc/mender/artifact_info" |
-            tr -d '\r' |
-            tail -n 1
+                tr -d '\r' |
+                tail -n 1
         )"
     fi
 
@@ -451,7 +432,6 @@ if [[ "${SKIP_ARTIFACT_CHECK}" != true ]]; then
 else
     info "  RUNNING_ARTIFACT:      <check skipped>"
 fi
-
 
 # User-provided application services.
 if ((${#REQUIRED_SERVICES[@]} > 0)); then
@@ -477,7 +457,6 @@ if ((${#REQUIRED_SERVICES[@]} > 0)); then
     done
 fi
 
-
 # Basic root filesystem health.
 if ! run_remote "test -r /etc/os-release"; then
     error "/etc/os-release is not readable."
@@ -491,12 +470,11 @@ fi
 
 ROOT_USAGE="$(
     run_remote "df -P / | awk 'NR==2 {print \$5}'" |
-    tr -d '\r'
+        tr -d '\r'
 )"
 
 info
 info "  ROOT_FILESYSTEM_USAGE: ${ROOT_USAGE}"
-
 
 # ---------------------------------------------------------------------------
 # Result

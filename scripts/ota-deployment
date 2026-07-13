@@ -32,7 +32,6 @@
 
 set -euo pipefail
 
-
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
@@ -49,25 +48,19 @@ REFRESH_HOST_KEY=true
 ASSUME_YES=false
 REQUIRED_SERVICES=()
 
-
 # ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
 
-line()
-{
+line() {
     printf '%*s\n' 64 '' | tr ' ' '='
 }
 
-
-section_line()
-{
+section_line() {
     printf '%*s\n' 64 '' | tr ' ' '-'
 }
 
-
-banner()
-{
+banner() {
     echo
     line
     printf "%32s\n" "Embedded Linux OTA Deployment"
@@ -75,9 +68,7 @@ banner()
     echo
 }
 
-
-step()
-{
+step() {
     local number="$1"
     local total="$2"
     local title="$3"
@@ -89,21 +80,15 @@ step()
     echo
 }
 
-
-success()
-{
+success() {
     echo "OK: $*"
 }
 
-
-error()
-{
+error() {
     echo "Error: $*" >&2
 }
 
-
-usage()
-{
+usage() {
     cat <<EOF
 Usage: $(basename "$0") [options]
 
@@ -133,9 +118,7 @@ Examples:
 EOF
 }
 
-
-require_variable()
-{
+require_variable() {
     local variable_name="$1"
 
     if [[ -z "${!variable_name:-}" ]]; then
@@ -144,9 +127,7 @@ require_variable()
     fi
 }
 
-
-format_duration()
-{
+format_duration() {
     local seconds="$1"
     local minutes=$((seconds / 60))
     local remaining=$((seconds % 60))
@@ -158,45 +139,65 @@ format_duration()
     fi
 }
 
-
 # ---------------------------------------------------------------------------
 # Parse options
 # ---------------------------------------------------------------------------
 
 while (($# > 0)); do
     case "$1" in
-        -d|--device-id)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -d | --device-id)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             DEVICE_ID="$2"
             shift 2
             ;;
-        -H|--host)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -H | --host)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             DEVICE_HOST="$2"
             shift 2
             ;;
-        -u|--user)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -u | --user)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             DEVICE_USER="$2"
             shift 2
             ;;
-        -n|--name)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -n | --name)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             DEPLOYMENT_NAME="$2"
             shift 2
             ;;
-        -i|--interval)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -i | --interval)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             POLL_INTERVAL="$2"
             shift 2
             ;;
-        -t|--timeout)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -t | --timeout)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             DEPLOYMENT_TIMEOUT="$2"
             shift 2
             ;;
-        -s|--service)
-            [[ $# -ge 2 ]] || { error "$1 requires an argument."; exit 1; }
+        -s | --service)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
             REQUIRED_SERVICES+=("$2")
             shift 2
             ;;
@@ -212,11 +213,11 @@ while (($# > 0)); do
             REFRESH_HOST_KEY=true
             shift
             ;;
-        -y|--yes)
+        -y | --yes)
             ASSUME_YES=true
             shift
             ;;
-        -h|--help)
+        -h | --help)
             usage
             exit 0
             ;;
@@ -227,7 +228,6 @@ while (($# > 0)); do
             ;;
     esac
 done
-
 
 # ---------------------------------------------------------------------------
 # Validate environment
@@ -273,7 +273,6 @@ if ! [[ "${DEPLOYMENT_TIMEOUT}" =~ ^[0-9]+$ ]] || ((DEPLOYMENT_TIMEOUT < 1)); th
     exit 1
 fi
 
-
 # ---------------------------------------------------------------------------
 # Load local build information
 # ---------------------------------------------------------------------------
@@ -286,7 +285,6 @@ check_build_verify
 if [[ -z "${DEPLOYMENT_NAME}" ]]; then
     DEPLOYMENT_NAME="deploy-${BUILD_ARTIFACT_NAME}"
 fi
-
 
 # ---------------------------------------------------------------------------
 # Summary and confirmation
@@ -331,7 +329,6 @@ else
     TOTAL_STEPS=4
 fi
 
-
 # ---------------------------------------------------------------------------
 # Step 1: Validate build
 # ---------------------------------------------------------------------------
@@ -339,7 +336,6 @@ fi
 step 1 "${TOTAL_STEPS}" "Validate local build"
 check-build --verify --quiet
 success "Local build verification passed."
-
 
 # ---------------------------------------------------------------------------
 # Step 2: Upload and create deployment
@@ -361,7 +357,6 @@ fi
 deploy-build "${deploy_args[@]}"
 success "Deployment request submitted."
 
-
 # ---------------------------------------------------------------------------
 # Step 3: Wait for completion
 # ---------------------------------------------------------------------------
@@ -373,7 +368,6 @@ deploy-status \
     --timeout "${DEPLOYMENT_TIMEOUT}"
 
 success "OTA update completed."
-
 
 # ---------------------------------------------------------------------------
 # Step 4: Validate device
@@ -398,7 +392,6 @@ if [[ "${SKIP_VALIDATION}" != true ]]; then
     validate-build "${validate_args[@]}"
     success "Device validation passed."
 fi
-
 
 # ---------------------------------------------------------------------------
 # Final summary
