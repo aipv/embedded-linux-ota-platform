@@ -1,0 +1,479 @@
+#!/usr/bin/env bash
+#
+# build-image
+#
+# Generate the BitBake project configuration and build the configured Yocto
+# image.
+#
+# Prerequisite:
+#   source setup-env
+#
+# Usage:
+#   build-image [options]
+#
+# Options:
+#   -r <release>     Set IMAGE_RELEASE. Default: dev
+#   -b <build_id>    Set IMAGE_BUILD_ID.
+#                    Default: current UTC time in YYYYMMDDHHMMSS format
+#   -h               Show this help
+#
+# Examples:
+#   build-image
+#   build-image -r prod
+#   build-image -b v1.0.0
+#   build-image -r prod -b v1.0.0
+#
+
+set -euo pipefail
+
+
+# ---------------------------------------------------------------------------
+# Default command-line values
+# ---------------------------------------------------------------------------
+
+RELEASE="dev"
+BUILD_ID=""
+
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+usage()
+{
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Generate project.inc and build the configured Yocto image.
+
+Options:
+  -r <release>     Set IMAGE_RELEASE. Default: dev
+  -b <build_id>    Set IMAGE_BUILD_ID.
+                   Default: current UTC time in YYYYMMDDHHMMSS format
+  -h               Show this help
+
+Examples:
+  $(basename "$0")
+  $(basename "$0") -r prod
+  $(basename "$0") -b v1.0.0
+  $(basename "$0") -r prod -b v1.0.0
+EOF
+}
+
+
+error()
+{
+    echo "Error: $*" >&2
+}
+
+
+require_variable()
+{
+    local variable_name="$1"
+
+    if [[ -z "${!variable_name:-}" ]]; then
+        error "${variable_name} is not set."
+        error "Run 'source setup-env' before running $(basename "$0")."
+        exit 1
+    fi
+}
+
+
+# Escape a value before writing it into a double-quoted BitBake assignment.
+bitbake_escape()
+{
+    local value="$1"
+
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\n'/\\n}"
+    value="${value//$'\r'/\\r}"
+
+    printf '%s' "${value}"
+}
+
+
+# Reject values that would produce unsafe or ambiguous artifact names.
+validate_name_component()
+{
+    local variable_name="$1"
+    local value="$2"
+
+    if [[ -z "${value}" ]]; then
+        error "${variable_name} must not be empty."
+        exit 1
+    fi
+
+    if [[ ! "${value}" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+        error "${variable_name} contains unsupported characters: ${value}"
+        error "Allowed characters: letters, numbers, '.', '_', '+', and '-'."
+        exit 1
+    fi
+}
+
+
+# ---------------------------------------------------------------------------
+# Parse command-line options
+# ---------------------------------------------------------------------------
+
+while getopts ":r:b:h" option; do
+    case "${option}" in
+        r)
+            RELEASE="${OPTARG}"
+            ;;
+        b)
+            BUILD_ID="${OPTARG}"
+            ;;
+        h)
+            usage
+            exit 0
+            ;;
+        :)
+            error "Option -${OPTARG} requires an argument."
+            usage >&2
+            exit 1
+            ;;
+        \?)
+            error "Unknown option: -${OPTARG}"
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+shift $((OPTIND - 1))
+
+if (($# > 0)); then
+    error "Unexpected argument: $1"
+    usage >&2
+    exit 1
+fi
+
+
+# ---------------------------------------------------------------------------
+# Validate the initialized build environment
+# ---------------------------------------------------------------------------
+
+require_variable PROJECT_NAME
+require_variable PROJECT_DIR
+require_variable PROJECT_CONFIG
+require_variable BUILDDIR
+require_variable CONF_DIR
+require_variable PROJECT_INC
+require_variable YOCTO_MACHINE
+require_variable YOCTO_IMAGE
+require_variable MENDER_SERVER_URL
+
+if ! command -v bitbake >/dev/null 2>&1; then
+    error "The bitbake command is not available."
+    error "Run 'source setup-env' before running $(basename "$0")."
+    exit 1
+fi
+
+if [[ ! -d "${CONF_DIR}" ]]; then
+    error "Yocto configuration directory does not exist: ${CONF_DIR}"
+    exit 1
+fi
+
+if [[ "${PROJECT_INC}" != "${CONF_DIR}/project.inc" ]]; then
+    error "PROJECT_INC has an unexpected value: ${PROJECT_INC}"
+    error "Expected: ${CONF_DIR}/project.inc"
+    exit 1
+fi
+
+
+# ---------------------------------------------------------------------------
+# Resolve dynamic build information
+# ---------------------------------------------------------------------------
+
+if [[ -z "${BUILD_ID}" ]]; then
+    BUILD_ID="$(date -u +%Y%m%d%H%M%S)"
+fi
+
+validate_name_component PROJECT_NAME "${PROJECT_NAME}"
+validate_name_component IMAGE_RELEASE "${RELEASE}"
+validate_name_component IMAGE_BUILD_ID "${BUILD_ID}"
+
+IMAGE_RELEASE="${RELEASE}"
+IMAGE_BUILD_ID="${BUILD_ID}"
+MENDER_ARTIFACT_NAME="${PROJECT_NAME}-${IMAGE_RELEASE}-${IMAGE_BUILD_ID}"
+
+export IMAGE_RELEASE
+export IMAGE_BUILD_ID
+export MENDER_ARTIFACT_NAME
+
+
+# ---------------------------------------------------------------------------
+# Resolve project configuration values used by BitBake
+# ---------------------------------------------------------------------------
+
+MENDER_SERVER_HOST_IP="${MENDER_SERVER_HOST_IP:-}"
+MENDER_SERVER_CRT="${MENDER_SERVER_CRT:-}"
+
+if [[ -n "${MENDER_SERVER_CRT}" && "${MENDER_SERVER_CRT}" != /* ]]; then
+    MENDER_SERVER_CRT="${PROJECT_DIR}/${MENDER_SERVER_CRT}"
+fi
+
+
+# ---------------------------------------------------------------------------
+# Generate project.inc atomically
+# ---------------------------------------------------------------------------
+
+temporary_project_inc="$(mktemp "${PROJECT_INC}.XXXXXX")"
+
+cleanup()
+{
+    rm -f "${temporary_project_inc:-}"
+}
+
+trap cleanup EXIT
+
+cat > "${temporary_project_inc}" <<EOF
+# ---------------------------------------------------------------------------
+# Auto-generated by $(basename "$0").
+# Do not edit this file manually.
+# Source configuration: ${PROJECT_CONFIG}
+# ---------------------------------------------------------------------------
+
+# Project
+PROJECT_ROOT = "$(bitbake_escape "${PROJECT_DIR}")"
+PROJECT_NAME = "$(bitbake_escape "${PROJECT_NAME}")"
+
+# Yocto build
+MACHINE = "$(bitbake_escape "${YOCTO_MACHINE}")"
+YOCTO_IMAGE = "$(bitbake_escape "${YOCTO_IMAGE}")"
+
+# Mender server
+PROJECT_MENDER_SERVER_URL = "$(bitbake_escape "${MENDER_SERVER_URL}")"
+PROJECT_MENDER_SERVER_HOST_IP = "$(bitbake_escape "${MENDER_SERVER_HOST_IP}")"
+PROJECT_MENDER_SERVER_CRT = "$(bitbake_escape "${MENDER_SERVER_CRT}")"
+
+# Dynamic build information
+IMAGE_RELEASE = "$(bitbake_escape "${IMAGE_RELEASE}")"
+IMAGE_BUILD_ID = "$(bitbake_escape "${IMAGE_BUILD_ID}")"
+MENDER_ARTIFACT_NAME = "$(bitbake_escape "${MENDER_ARTIFACT_NAME}")"
+EOF
+
+mv "${temporary_project_inc}" "${PROJECT_INC}"
+trap - EXIT
+
+
+# ---------------------------------------------------------------------------
+# Print build configuration
+# ---------------------------------------------------------------------------
+
+echo
+echo "Yocto image build"
+echo "================="
+printf "  %-24s %s\n" "PROJECT_NAME:" "${PROJECT_NAME}"
+printf "  %-24s %s\n" "YOCTO_MACHINE:" "${YOCTO_MACHINE}"
+printf "  %-24s %s\n" "YOCTO_IMAGE:" "${YOCTO_IMAGE}"
+printf "  %-24s %s\n" "IMAGE_RELEASE:" "${IMAGE_RELEASE}"
+printf "  %-24s %s\n" "IMAGE_BUILD_ID:" "${IMAGE_BUILD_ID}"
+printf "  %-24s %s\n" "MENDER_ARTIFACT_NAME:" "${MENDER_ARTIFACT_NAME}"
+printf "  %-24s %s\n" "PROJECT_INC:" "${PROJECT_INC}"
+echo
+
+
+# ---------------------------------------------------------------------------
+# Build the image
+# ---------------------------------------------------------------------------
+
+bitbake "${YOCTO_IMAGE}"
+
+
+# ---------------------------------------------------------------------------
+# Generate immutable build metadata
+# ---------------------------------------------------------------------------
+
+require_variable DEPLOY_DIR_IMAGE
+require_variable BUILD_META_FILE
+
+if ! command -v jq >/dev/null 2>&1; then
+    error "jq is required to generate ${BUILD_META_FILE}."
+    error "Install it with: sudo apt install jq"
+    exit 1
+fi
+
+if ! command -v sha256sum >/dev/null 2>&1; then
+    error "sha256sum is required to generate build metadata."
+    exit 1
+fi
+
+if ! command -v stat >/dev/null 2>&1; then
+    error "stat is required to generate build metadata."
+    exit 1
+fi
+
+if [[ ! -d "${DEPLOY_DIR_IMAGE}" ]]; then
+    error "Yocto deploy directory does not exist: ${DEPLOY_DIR_IMAGE}"
+    exit 1
+fi
+
+ARTIFACT_FILE="${DEPLOY_DIR_IMAGE}/${YOCTO_IMAGE}-${YOCTO_MACHINE}.mender"
+
+if [[ ! -f "${ARTIFACT_FILE}" ]]; then
+    error "Mender Artifact was not generated:"
+    error "  ${ARTIFACT_FILE}"
+    exit 1
+fi
+
+# Prefer an image whose filename begins with the configured image and machine.
+# Yocto may append a timestamp or version before the .wic compression suffix.
+DISK_IMAGE_FILE="$(
+    find "${DEPLOY_DIR_IMAGE}" \
+        -maxdepth 1 \
+        -type f \
+        \( \
+            -name "${YOCTO_IMAGE}-${YOCTO_MACHINE}*.wic" \
+            -o -name "${YOCTO_IMAGE}-${YOCTO_MACHINE}*.wic.bz2" \
+            -o -name "${YOCTO_IMAGE}-${YOCTO_MACHINE}*.wic.gz" \
+            -o -name "${YOCTO_IMAGE}-${YOCTO_MACHINE}*.wic.xz" \
+            -o -name "${YOCTO_IMAGE}-${YOCTO_MACHINE}*.wic.zst" \
+        \) \
+        -printf '%T@ %p\n' |
+        sort -nr |
+        head -n 1 |
+        cut -d' ' -f2-
+)"
+
+if [[ -z "${DISK_IMAGE_FILE}" || ! -f "${DISK_IMAGE_FILE}" ]]; then
+    error "No WIC disk image was found in:"
+    error "  ${DEPLOY_DIR_IMAGE}"
+    error "Expected a filename beginning with:"
+    error "  ${YOCTO_IMAGE}-${YOCTO_MACHINE}"
+    exit 1
+fi
+
+# Yocto commonly exposes stable deploy names as symbolic links. Resolve both
+# outputs before recording paths, sizes and checksums in build.meta.json.
+ARTIFACT_FILE="$(readlink -f "${ARTIFACT_FILE}")" || {
+    error "Unable to resolve Mender Artifact path."
+    exit 1
+}
+
+DISK_IMAGE_FILE="$(readlink -f "${DISK_IMAGE_FILE}")" || {
+    error "Unable to resolve disk image path."
+    exit 1
+}
+
+if [[ ! -f "${ARTIFACT_FILE}" ]]; then
+    error "Resolved Mender Artifact does not exist:"
+    error "  ${ARTIFACT_FILE}"
+    exit 1
+fi
+
+if [[ ! -f "${DISK_IMAGE_FILE}" ]]; then
+    error "Resolved disk image does not exist:"
+    error "  ${DISK_IMAGE_FILE}"
+    exit 1
+fi
+
+BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+ARTIFACT_SIZE="$(stat -c '%s' "${ARTIFACT_FILE}")"
+ARTIFACT_SHA256="$(sha256sum "${ARTIFACT_FILE}" | awk '{print $1}')"
+
+DISK_IMAGE_SIZE="$(stat -c '%s' "${DISK_IMAGE_FILE}")"
+DISK_IMAGE_SHA256="$(sha256sum "${DISK_IMAGE_FILE}" | awk '{print $1}')"
+
+GIT_BRANCH=""
+GIT_COMMIT=""
+GIT_DIRTY=false
+
+if git -C "${PROJECT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    GIT_BRANCH="$(
+        git -C "${PROJECT_DIR}" branch --show-current 2>/dev/null || true
+    )"
+
+    GIT_COMMIT="$(
+        git -C "${PROJECT_DIR}" rev-parse HEAD 2>/dev/null || true
+    )"
+
+    if ! git -C "${PROJECT_DIR}" diff --quiet --ignore-submodules -- ||
+       ! git -C "${PROJECT_DIR}" diff --cached --quiet --ignore-submodules -- ||
+       [[ -n "$(git -C "${PROJECT_DIR}" ls-files --others --exclude-standard)" ]]
+    then
+        GIT_DIRTY=true
+    fi
+fi
+
+temporary_build_meta="$(mktemp "${BUILD_META_FILE}.XXXXXX")"
+
+cleanup_meta()
+{
+    rm -f "${temporary_build_meta:-}"
+}
+
+trap cleanup_meta EXIT
+
+jq -n \
+    --arg project_name "${PROJECT_NAME}" \
+    --arg project_directory "${PROJECT_DIR}" \
+    --arg release "${IMAGE_RELEASE}" \
+    --arg build_id "${IMAGE_BUILD_ID}" \
+    --arg artifact_name "${MENDER_ARTIFACT_NAME}" \
+    --arg build_time "${BUILD_TIME}" \
+    --arg machine "${YOCTO_MACHINE}" \
+    --arg image "${YOCTO_IMAGE}" \
+    --arg build_directory "${BUILDDIR}" \
+    --arg artifact_file "${ARTIFACT_FILE}" \
+    --argjson artifact_size "${ARTIFACT_SIZE}" \
+    --arg artifact_sha256 "${ARTIFACT_SHA256}" \
+    --arg disk_image_file "${DISK_IMAGE_FILE}" \
+    --argjson disk_image_size "${DISK_IMAGE_SIZE}" \
+    --arg disk_image_sha256 "${DISK_IMAGE_SHA256}" \
+    --arg git_branch "${GIT_BRANCH}" \
+    --arg git_commit "${GIT_COMMIT}" \
+    --argjson git_dirty "${GIT_DIRTY}" \
+    '{
+        schema_version: 1,
+        project: {
+            name: $project_name,
+            directory: $project_directory
+        },
+        build: {
+            release: $release,
+            build_id: $build_id,
+            artifact_name: $artifact_name,
+            time: $build_time
+        },
+        yocto: {
+            machine: $machine,
+            image: $image,
+            build_dir: $build_directory
+        },
+        output: {
+            artifact: {
+                file: $artifact_file,
+                size: $artifact_size,
+                sha256: $artifact_sha256
+            },
+            disk_image: {
+                file: $disk_image_file,
+                size: $disk_image_size,
+                sha256: $disk_image_sha256
+            }
+        },
+        git: {
+            branch: $git_branch,
+            commit: $git_commit,
+            dirty: $git_dirty
+        }
+    }' > "${temporary_build_meta}"
+
+mv "${temporary_build_meta}" "${BUILD_META_FILE}"
+trap - EXIT
+
+
+# ---------------------------------------------------------------------------
+# Print build result
+# ---------------------------------------------------------------------------
+
+echo
+echo "Build completed successfully."
+printf "  %-24s %s\n" "MENDER_ARTIFACT_NAME:" "${MENDER_ARTIFACT_NAME}"
+printf "  %-24s %s\n" "ARTIFACT_FILE:" "${ARTIFACT_FILE}"
+printf "  %-24s %s\n" "DISK_IMAGE_FILE:" "${DISK_IMAGE_FILE}"
+printf "  %-24s %s\n" "BUILD_META_FILE:" "${BUILD_META_FILE}"
+echo

@@ -1,0 +1,510 @@
+#!/usr/bin/env bash
+#
+# validate-build
+#
+# Validate that a deployed build is running correctly on a target device.
+#
+# Prerequisite:
+#   source scripts/setup-env
+#
+# Usage:
+#   validate-build [options]
+#
+# Options:
+#   -H, --host <host>           Override DEVICE_IP_ADDRESS
+#   -u, --user <user>           Override DEVICE_SSH_USER
+#   -p, --port <port>           SSH port. Default: 22
+#   -t, --timeout <seconds>     SSH connection timeout. Default: 10
+#   -s, --service <name>        Require a systemd service to be active.
+#                               May be specified multiple times.
+#       --skip-artifact-check   Do not compare the running Artifact name
+#       --refresh-host-key      Remove the stored SSH host key before connecting
+#   -q, --quiet                 Print only errors and the final result
+#   -h, --help                  Show this help
+#
+
+set -euo pipefail
+
+
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+
+DEVICE_HOST="${DEVICE_IP_ADDRESS:-}"
+DEVICE_USER="${DEVICE_SSH_USER:-}"
+SSH_PORT=22
+SSH_TIMEOUT=10
+SKIP_ARTIFACT_CHECK=false
+REFRESH_HOST_KEY=false
+QUIET=false
+REQUIRED_SERVICES=()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+error()
+{
+    echo "Error: $*" >&2
+}
+
+
+info()
+{
+    if [[ "${QUIET}" != true ]]; then
+        echo "$*"
+    fi
+}
+
+
+usage()
+{
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Validate that the latest local build is running correctly on a device.
+
+Options:
+  -H, --host <host>           Override DEVICE_IP_ADDRESS
+  -u, --user <user>           Override DEVICE_SSH_USER
+  -p, --port <port>           SSH port. Default: 22
+  -t, --timeout <seconds>     SSH connection timeout. Default: 10
+  -s, --service <name>        Require a systemd service to be active.
+                              May be specified multiple times.
+      --skip-artifact-check   Do not compare the running Artifact name
+      --refresh-host-key      Remove the stored SSH host key before connecting.
+                              Use after reflashing or replacing the device.
+  -q, --quiet                 Print only errors and the final result
+  -h, --help                  Show this help
+
+Examples:
+  $(basename "$0")
+  $(basename "$0") --service my-application.service
+  $(basename "$0") -H 192.168.0.82 -u root
+  $(basename "$0") --skip-artifact-check
+  $(basename "$0") --refresh-host-key
+EOF
+}
+
+
+require_variable()
+{
+    local variable_name="$1"
+
+    if [[ -z "${!variable_name:-}" ]]; then
+        error "${variable_name} is not set."
+        return 1
+    fi
+}
+
+
+run_remote()
+{
+    ssh "${SSH_OPTIONS[@]}" "${DEVICE_USER}@${DEVICE_HOST}" "$@"
+}
+
+
+check_remote_command()
+{
+    local command_name="$1"
+
+    run_remote "command -v '${command_name}' >/dev/null 2>&1"
+}
+
+
+# ---------------------------------------------------------------------------
+# Parse options
+# ---------------------------------------------------------------------------
+
+while (($# > 0)); do
+    case "$1" in
+        -H|--host)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
+            DEVICE_HOST="$2"
+            shift 2
+            ;;
+        -u|--user)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
+            DEVICE_USER="$2"
+            shift 2
+            ;;
+        -p|--port)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
+            SSH_PORT="$2"
+            shift 2
+            ;;
+        -t|--timeout)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
+            SSH_TIMEOUT="$2"
+            shift 2
+            ;;
+        -s|--service)
+            [[ $# -ge 2 ]] || {
+                error "$1 requires an argument."
+                exit 1
+            }
+            REQUIRED_SERVICES+=("$2")
+            shift 2
+            ;;
+        --skip-artifact-check)
+            SKIP_ARTIFACT_CHECK=true
+            shift
+            ;;
+        --refresh-host-key)
+            REFRESH_HOST_KEY=true
+            shift
+            ;;
+        -q|--quiet)
+            QUIET=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+
+# ---------------------------------------------------------------------------
+# Validate local environment and load build metadata
+# ---------------------------------------------------------------------------
+
+require_variable SCRIPTS_DIR || {
+    error "Run 'source scripts/setup-env' first."
+    exit 1
+}
+
+if [[ -z "${DEVICE_HOST}" ]]; then
+    error "DEVICE_IP_ADDRESS is not set."
+    error "Configure it in project.conf or pass --host."
+    exit 1
+fi
+
+if [[ -z "${DEVICE_USER}" ]]; then
+    error "DEVICE_SSH_USER is not set."
+    error "Configure it in project.conf or pass --user."
+    exit 1
+fi
+
+if ! [[ "${SSH_PORT}" =~ ^[0-9]+$ ]]; then
+    error "Invalid SSH port: ${SSH_PORT}"
+    exit 1
+fi
+
+if ! [[ "${SSH_TIMEOUT}" =~ ^[0-9]+$ ]]; then
+    error "Invalid SSH timeout: ${SSH_TIMEOUT}"
+    exit 1
+fi
+
+if ! command -v ssh >/dev/null 2>&1; then
+    error "ssh is required."
+    exit 1
+fi
+
+CHECK_BUILD_LIBRARY="${SCRIPTS_DIR}/check-build"
+
+if [[ ! -f "${CHECK_BUILD_LIBRARY}" ]]; then
+    error "check-build was not found:"
+    error "  ${CHECK_BUILD_LIBRARY}"
+    exit 1
+fi
+
+# shellcheck source=/dev/null
+source "${CHECK_BUILD_LIBRARY}"
+
+check_build_load
+check_build_validate_paths
+check_build_validate_sizes
+
+
+# ---------------------------------------------------------------------------
+# Optional SSH host-key refresh
+# ---------------------------------------------------------------------------
+
+if [[ "${REFRESH_HOST_KEY}" == true ]]; then
+    if ! command -v ssh-keygen >/dev/null 2>&1; then
+        error "ssh-keygen is required for --refresh-host-key."
+        exit 1
+    fi
+
+    info "Removing the stored SSH host key for ${DEVICE_HOST}..."
+
+    ssh-keygen \
+        -f "${HOME}/.ssh/known_hosts" \
+        -R "${DEVICE_HOST}" \
+        >/dev/null 2>&1 || true
+
+    # OpenSSH stores non-default ports using the [host]:port form.
+    if [[ "${SSH_PORT}" != "22" ]]; then
+        ssh-keygen \
+            -f "${HOME}/.ssh/known_hosts" \
+            -R "[${DEVICE_HOST}]:${SSH_PORT}" \
+            >/dev/null 2>&1 || true
+    fi
+fi
+
+
+# ---------------------------------------------------------------------------
+# SSH configuration
+# ---------------------------------------------------------------------------
+
+SSH_OPTIONS=(
+    -p "${SSH_PORT}"
+    -o BatchMode=yes
+    -o ConnectTimeout="${SSH_TIMEOUT}"
+    -o ServerAliveInterval=5
+    -o ServerAliveCountMax=2
+    -o StrictHostKeyChecking=accept-new
+)
+
+
+# ---------------------------------------------------------------------------
+# Device checks
+# ---------------------------------------------------------------------------
+
+info
+info "Validate deployed build"
+info "======================="
+info "  DEVICE:               ${DEVICE_USER}@${DEVICE_HOST}:${SSH_PORT}"
+info "  EXPECTED_ARTIFACT:     ${BUILD_ARTIFACT_NAME}"
+info
+
+info "Checking SSH connectivity..."
+
+ssh_error_file="$(mktemp)"
+
+cleanup_ssh_error()
+{
+    rm -f "${ssh_error_file}"
+}
+
+trap cleanup_ssh_error EXIT
+
+if ! run_remote "true" 2>"${ssh_error_file}"; then
+    if grep -q \
+        -e 'REMOTE HOST IDENTIFICATION HAS CHANGED' \
+        -e 'Host key verification failed' \
+        "${ssh_error_file}"
+    then
+        cat "${ssh_error_file}" >&2
+        error "The stored SSH host key does not match the device."
+        error "This commonly happens after reflashing the device."
+        error
+        error "Verify that ${DEVICE_HOST} is the expected device, then run:"
+        error "  $(basename "$0") --refresh-host-key"
+    else
+        cat "${ssh_error_file}" >&2
+        error "Unable to connect to ${DEVICE_USER}@${DEVICE_HOST}:${SSH_PORT}"
+    fi
+
+    exit 1
+fi
+
+rm -f "${ssh_error_file}"
+trap - EXIT
+
+info "SSH connectivity: OK"
+
+
+# System identity and uptime.
+DEVICE_HOSTNAME="$(run_remote "hostname 2>/dev/null || cat /etc/hostname")"
+DEVICE_KERNEL="$(run_remote "uname -srmo")"
+DEVICE_UPTIME="$(run_remote "uptime -p 2>/dev/null || cat /proc/uptime")"
+
+info
+info "Device information"
+info "------------------"
+info "  HOSTNAME:              ${DEVICE_HOSTNAME}"
+info "  KERNEL:                ${DEVICE_KERNEL}"
+info "  UPTIME:                ${DEVICE_UPTIME}"
+
+
+# systemd overall state.
+SYSTEM_STATE="unknown"
+
+if check_remote_command systemctl; then
+    SYSTEM_STATE="$(run_remote "systemctl is-system-running 2>/dev/null || true")"
+
+    case "${SYSTEM_STATE}" in
+        running)
+            info "  SYSTEMD_STATE:         running"
+            ;;
+        degraded)
+            error "Device systemd state is degraded."
+
+            run_remote \
+                "systemctl --failed --no-legend --no-pager 2>/dev/null || true" \
+                >&2
+
+            exit 1
+            ;;
+        *)
+            error "Unexpected systemd state: ${SYSTEM_STATE}"
+            exit 1
+            ;;
+    esac
+else
+    info "  SYSTEMD_STATE:         <systemctl unavailable>"
+fi
+
+
+# Mender service.
+MENDER_SERVICE=""
+
+if check_remote_command systemctl; then
+    for service_name in \
+        mender-client.service \
+        mender-updated.service \
+        mender.service
+    do
+        if run_remote \
+            "systemctl list-unit-files '${service_name}' --no-legend 2>/dev/null |
+             grep -q '^${service_name}'"
+        then
+            MENDER_SERVICE="${service_name}"
+            break
+        fi
+    done
+
+    if [[ -n "${MENDER_SERVICE}" ]]; then
+        if ! run_remote "systemctl is-active --quiet '${MENDER_SERVICE}'"; then
+            error "Mender service is not active: ${MENDER_SERVICE}"
+            run_remote \
+                "systemctl status '${MENDER_SERVICE}' --no-pager 2>/dev/null || true" \
+                >&2
+            exit 1
+        fi
+
+        info "  MENDER_SERVICE:        ${MENDER_SERVICE} (active)"
+    else
+        error "No supported Mender systemd service was found."
+        exit 1
+    fi
+fi
+
+
+# Running Artifact name.
+if [[ "${SKIP_ARTIFACT_CHECK}" != true ]]; then
+    RUNNING_ARTIFACT_NAME=""
+
+    if run_remote "command -v mender-show-artifact >/dev/null 2>&1"; then
+        RUNNING_ARTIFACT_NAME="$(
+            run_remote "mender-show-artifact 2>/dev/null" |
+            tr -d '\r' |
+            tail -n 1
+        )"
+    elif run_remote "command -v mender-update >/dev/null 2>&1"; then
+        RUNNING_ARTIFACT_NAME="$(
+            run_remote "mender-update show-artifact 2>/dev/null" |
+            tr -d '\r' |
+            tail -n 1
+        )"
+    elif run_remote "command -v mender >/dev/null 2>&1"; then
+        RUNNING_ARTIFACT_NAME="$(
+            run_remote "mender show-artifact 2>/dev/null" |
+            tr -d '\r' |
+            tail -n 1
+        )"
+    elif run_remote "test -r /etc/mender/artifact_info"; then
+        RUNNING_ARTIFACT_NAME="$(
+            run_remote \
+                "sed -n 's/^artifact_name=//p' /etc/mender/artifact_info" |
+            tr -d '\r' |
+            tail -n 1
+        )"
+    fi
+
+    if [[ -z "${RUNNING_ARTIFACT_NAME}" ]]; then
+        error "Unable to determine the running Mender Artifact name."
+        error "Use --skip-artifact-check only when the image intentionally"
+        error "does not provide a Mender Artifact information command."
+        exit 1
+    fi
+
+    info "  RUNNING_ARTIFACT:      ${RUNNING_ARTIFACT_NAME}"
+
+    if [[ "${RUNNING_ARTIFACT_NAME}" != "${BUILD_ARTIFACT_NAME}" ]]; then
+        error "The device is running a different Artifact."
+        error "Expected: ${BUILD_ARTIFACT_NAME}"
+        error "Actual:   ${RUNNING_ARTIFACT_NAME}"
+        exit 1
+    fi
+else
+    info "  RUNNING_ARTIFACT:      <check skipped>"
+fi
+
+
+# User-provided application services.
+if ((${#REQUIRED_SERVICES[@]} > 0)); then
+    if ! check_remote_command systemctl; then
+        error "Cannot validate services because systemctl is unavailable."
+        exit 1
+    fi
+
+    info
+    info "Required services"
+    info "-----------------"
+
+    for service_name in "${REQUIRED_SERVICES[@]}"; do
+        if run_remote "systemctl is-active --quiet '${service_name}'"; then
+            info "  ${service_name}: active"
+        else
+            error "Required service is not active: ${service_name}"
+            run_remote \
+                "systemctl status '${service_name}' --no-pager 2>/dev/null || true" \
+                >&2
+            exit 1
+        fi
+    done
+fi
+
+
+# Basic root filesystem health.
+if ! run_remote "test -r /etc/os-release"; then
+    error "/etc/os-release is not readable."
+    exit 1
+fi
+
+if ! run_remote "test -d /var && test -d /tmp"; then
+    error "Required runtime directories are missing."
+    exit 1
+fi
+
+ROOT_USAGE="$(
+    run_remote "df -P / | awk 'NR==2 {print \$5}'" |
+    tr -d '\r'
+)"
+
+info
+info "  ROOT_FILESYSTEM_USAGE: ${ROOT_USAGE}"
+
+
+# ---------------------------------------------------------------------------
+# Result
+# ---------------------------------------------------------------------------
+
+echo
+echo "Build validation passed."
+printf "  %-24s %s\n" "DEVICE:" "${DEVICE_USER}@${DEVICE_HOST}"
+printf "  %-24s %s\n" "ARTIFACT:" "${BUILD_ARTIFACT_NAME}"
+printf "  %-24s %s\n" "SYSTEM_STATE:" "${SYSTEM_STATE}"
+echo

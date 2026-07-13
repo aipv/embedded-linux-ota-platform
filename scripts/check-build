@@ -1,0 +1,441 @@
+#!/usr/bin/env bash
+#
+# check-build
+#
+# Validate and load metadata for the most recent local Yocto build.
+#
+# Direct usage:
+#   check-build
+#   check-build --quiet
+#   check-build --json
+#   check-build --verify
+#
+# Library usage:
+#   source "${SCRIPTS_DIR}/check-build"
+#   check_build_load
+#   check_build_verify
+#
+# Exported variables after check_build_load:
+#   BUILD_META_SCHEMA_VERSION
+#   BUILD_PROJECT_NAME
+#   BUILD_PROJECT_DIR
+#   BUILD_RELEASE
+#   BUILD_ID
+#   BUILD_ARTIFACT_NAME
+#   BUILD_TIME
+#   BUILD_YOCTO_MACHINE
+#   BUILD_YOCTO_IMAGE
+#   BUILD_YOCTO_BUILDDIR
+#   BUILD_ARTIFACT_FILE
+#   BUILD_ARTIFACT_SIZE
+#   BUILD_ARTIFACT_SHA256
+#   BUILD_DISK_IMAGE_FILE
+#   BUILD_DISK_IMAGE_SIZE
+#   BUILD_DISK_IMAGE_SHA256
+#   BUILD_GIT_BRANCH
+#   BUILD_GIT_COMMIT
+#   BUILD_GIT_DIRTY
+#
+
+set -o pipefail
+
+
+# ---------------------------------------------------------------------------
+# Logging helpers
+# ---------------------------------------------------------------------------
+
+check_build_error()
+{
+    echo "Error: $*" >&2
+}
+
+
+check_build_warning()
+{
+    echo "Warning: $*" >&2
+}
+
+
+# ---------------------------------------------------------------------------
+# Environment and dependency checks
+# ---------------------------------------------------------------------------
+
+check_build_require_environment()
+{
+    if [[ -z "${BUILD_META_FILE:-}" ]]; then
+        check_build_error "BUILD_META_FILE is not set."
+        check_build_error "Run 'source scripts/setup-env' before using check-build."
+        return 1
+    fi
+
+    if [[ -z "${PROJECT_DIR:-}" ]]; then
+        check_build_error "PROJECT_DIR is not set."
+        check_build_error "Run 'source scripts/setup-env' before using check-build."
+        return 1
+    fi
+
+    if ! command -v jq >/dev/null 2>&1; then
+        check_build_error "jq is required."
+        check_build_error "Install it with: sudo apt install jq"
+        return 1
+    fi
+}
+
+
+check_build_require_metadata()
+{
+    check_build_require_environment || return 1
+
+    if [[ ! -f "${BUILD_META_FILE}" ]]; then
+        check_build_error "Build metadata not found:"
+        check_build_error "  ${BUILD_META_FILE}"
+        check_build_error "Run 'build-image' first."
+        return 1
+    fi
+
+    if ! jq -e . "${BUILD_META_FILE}" >/dev/null 2>&1; then
+        check_build_error "Build metadata is not valid JSON:"
+        check_build_error "  ${BUILD_META_FILE}"
+        return 1
+    fi
+}
+
+
+# ---------------------------------------------------------------------------
+# Metadata loading
+# ---------------------------------------------------------------------------
+
+check_build_load()
+{
+    check_build_require_metadata || return 1
+
+    BUILD_META_SCHEMA_VERSION="$(
+        jq -er '.schema_version' "${BUILD_META_FILE}"
+    )" || {
+        check_build_error "Missing schema_version in ${BUILD_META_FILE}"
+        return 1
+    }
+
+    if [[ "${BUILD_META_SCHEMA_VERSION}" != "1" ]]; then
+        check_build_error "Unsupported build metadata schema:"
+        check_build_error "  ${BUILD_META_SCHEMA_VERSION}"
+        return 1
+    fi
+
+    BUILD_PROJECT_NAME="$(jq -er '.project.name' "${BUILD_META_FILE}")" || return 1
+    BUILD_PROJECT_DIR="$(jq -er '.project.directory' "${BUILD_META_FILE}")" || return 1
+
+    BUILD_RELEASE="$(jq -er '.build.release' "${BUILD_META_FILE}")" || return 1
+    BUILD_ID="$(jq -er '.build.build_id' "${BUILD_META_FILE}")" || return 1
+    BUILD_ARTIFACT_NAME="$(jq -er '.build.artifact_name' "${BUILD_META_FILE}")" || return 1
+    BUILD_TIME="$(jq -er '.build.time' "${BUILD_META_FILE}")" || return 1
+
+    BUILD_YOCTO_MACHINE="$(jq -er '.yocto.machine' "${BUILD_META_FILE}")" || return 1
+    BUILD_YOCTO_IMAGE="$(jq -er '.yocto.image' "${BUILD_META_FILE}")" || return 1
+    BUILD_YOCTO_BUILDDIR="$(jq -er '.yocto.build_dir' "${BUILD_META_FILE}")" || return 1
+
+    BUILD_ARTIFACT_FILE="$(jq -er '.output.artifact.file' "${BUILD_META_FILE}")" || return 1
+    BUILD_ARTIFACT_SIZE="$(jq -er '.output.artifact.size' "${BUILD_META_FILE}")" || return 1
+    BUILD_ARTIFACT_SHA256="$(jq -er '.output.artifact.sha256' "${BUILD_META_FILE}")" || return 1
+
+    BUILD_DISK_IMAGE_FILE="$(jq -er '.output.disk_image.file' "${BUILD_META_FILE}")" || return 1
+    BUILD_DISK_IMAGE_SIZE="$(jq -er '.output.disk_image.size' "${BUILD_META_FILE}")" || return 1
+    BUILD_DISK_IMAGE_SHA256="$(jq -er '.output.disk_image.sha256' "${BUILD_META_FILE}")" || return 1
+
+    BUILD_GIT_BRANCH="$(jq -r '.git.branch // ""' "${BUILD_META_FILE}")"
+    BUILD_GIT_COMMIT="$(jq -r '.git.commit // ""' "${BUILD_META_FILE}")"
+    BUILD_GIT_DIRTY="$(jq -r '.git.dirty // false' "${BUILD_META_FILE}")"
+
+    export BUILD_META_SCHEMA_VERSION
+    export BUILD_PROJECT_NAME
+    export BUILD_PROJECT_DIR
+    export BUILD_RELEASE
+    export BUILD_ID
+    export BUILD_ARTIFACT_NAME
+    export BUILD_TIME
+    export BUILD_YOCTO_MACHINE
+    export BUILD_YOCTO_IMAGE
+    export BUILD_YOCTO_BUILDDIR
+    export BUILD_ARTIFACT_FILE
+    export BUILD_ARTIFACT_SIZE
+    export BUILD_ARTIFACT_SHA256
+    export BUILD_DISK_IMAGE_FILE
+    export BUILD_DISK_IMAGE_SIZE
+    export BUILD_DISK_IMAGE_SHA256
+    export BUILD_GIT_BRANCH
+    export BUILD_GIT_COMMIT
+    export BUILD_GIT_DIRTY
+}
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+check_build_validate_paths()
+{
+    if [[ "${BUILD_PROJECT_DIR}" != "${PROJECT_DIR}" ]]; then
+        check_build_error "Build metadata belongs to another project directory."
+        check_build_error "Metadata: ${BUILD_PROJECT_DIR}"
+        check_build_error "Current:  ${PROJECT_DIR}"
+        return 1
+    fi
+
+    if [[ ! -e "${BUILD_ARTIFACT_FILE}" ]]; then
+        check_build_error "Mender Artifact does not exist:"
+        check_build_error "  ${BUILD_ARTIFACT_FILE}"
+        return 1
+    fi
+
+    if [[ ! -e "${BUILD_DISK_IMAGE_FILE}" ]]; then
+        check_build_error "Disk image does not exist:"
+        check_build_error "  ${BUILD_DISK_IMAGE_FILE}"
+        return 1
+    fi
+
+    # Yocto commonly exposes stable deploy names as symbolic links. Resolve
+    # them so size, checksum and mender-artifact always operate on real files.
+    BUILD_ARTIFACT_FILE="$(readlink -f "${BUILD_ARTIFACT_FILE}")" || {
+        check_build_error "Unable to resolve Mender Artifact path."
+        return 1
+    }
+
+    BUILD_DISK_IMAGE_FILE="$(readlink -f "${BUILD_DISK_IMAGE_FILE}")" || {
+        check_build_error "Unable to resolve disk image path."
+        return 1
+    }
+
+    export BUILD_ARTIFACT_FILE
+    export BUILD_DISK_IMAGE_FILE
+}
+
+
+check_build_validate_sizes()
+{
+    local actual_artifact_size
+    local actual_disk_image_size
+
+    actual_artifact_size="$(stat -c '%s' "${BUILD_ARTIFACT_FILE}")" || return 1
+    actual_disk_image_size="$(stat -c '%s' "${BUILD_DISK_IMAGE_FILE}")" || return 1
+
+    if [[ "${actual_artifact_size}" != "${BUILD_ARTIFACT_SIZE}" ]]; then
+        check_build_error "Mender Artifact size does not match build metadata."
+        check_build_error "Expected: ${BUILD_ARTIFACT_SIZE}"
+        check_build_error "Actual:   ${actual_artifact_size}"
+        return 1
+    fi
+
+    if [[ "${actual_disk_image_size}" != "${BUILD_DISK_IMAGE_SIZE}" ]]; then
+        check_build_error "Disk image size does not match build metadata."
+        check_build_error "Expected: ${BUILD_DISK_IMAGE_SIZE}"
+        check_build_error "Actual:   ${actual_disk_image_size}"
+        return 1
+    fi
+}
+
+
+check_build_verify_checksums()
+{
+    local actual_artifact_sha256
+    local actual_disk_image_sha256
+
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        check_build_error "sha256sum is required for checksum verification."
+        return 1
+    fi
+
+    actual_artifact_sha256="$(
+        sha256sum "${BUILD_ARTIFACT_FILE}" | awk '{print $1}'
+    )" || return 1
+
+    if [[ "${actual_artifact_sha256}" != "${BUILD_ARTIFACT_SHA256}" ]]; then
+        check_build_error "Mender Artifact checksum does not match."
+        check_build_error "Expected: ${BUILD_ARTIFACT_SHA256}"
+        check_build_error "Actual:   ${actual_artifact_sha256}"
+        return 1
+    fi
+
+    actual_disk_image_sha256="$(
+        sha256sum "${BUILD_DISK_IMAGE_FILE}" | awk '{print $1}'
+    )" || return 1
+
+    if [[ "${actual_disk_image_sha256}" != "${BUILD_DISK_IMAGE_SHA256}" ]]; then
+        check_build_error "Disk image checksum does not match."
+        check_build_error "Expected: ${BUILD_DISK_IMAGE_SHA256}"
+        check_build_error "Actual:   ${actual_disk_image_sha256}"
+        return 1
+    fi
+}
+
+
+check_build_verify_artifact_name()
+{
+    local actual_artifact_name
+
+    if ! command -v mender-artifact >/dev/null 2>&1; then
+        check_build_warning "mender-artifact is not installed; internal Artifact name was not verified."
+        return 0
+    fi
+
+    actual_artifact_name="$(
+        mender-artifact read "${BUILD_ARTIFACT_FILE}" 2>/dev/null |
+        sed -n \
+            -e 's/^[[:space:]]*Name:[[:space:]]*//p' \
+            -e 's/^[[:space:]]*Artifact name:[[:space:]]*//p' |
+        head -n 1
+    )"
+
+    if [[ -z "${actual_artifact_name}" ]]; then
+        check_build_error "Unable to read the internal Mender Artifact name."
+        check_build_error "Artifact: ${BUILD_ARTIFACT_FILE}"
+        check_build_error
+        check_build_error "Inspect the command output with:"
+        check_build_error "  mender-artifact read \"${BUILD_ARTIFACT_FILE}\""
+        return 1
+    fi
+
+    if [[ "${actual_artifact_name}" != "${BUILD_ARTIFACT_NAME}" ]]; then
+        check_build_error "Mender Artifact internal name does not match metadata."
+        check_build_error "Expected: ${BUILD_ARTIFACT_NAME}"
+        check_build_error "Actual:   ${actual_artifact_name}"
+        return 1
+    fi
+}
+
+
+check_build_verify()
+{
+    check_build_load || return 1
+    check_build_validate_paths || return 1
+    check_build_validate_sizes || return 1
+    check_build_verify_checksums || return 1
+    check_build_verify_artifact_name || return 1
+}
+
+
+# ---------------------------------------------------------------------------
+# Display helpers
+# ---------------------------------------------------------------------------
+
+check_build_print()
+{
+    printf "\nLocal build\n"
+    printf "===========\n"
+    printf "  %-24s %s\n" "BUILD_META_FILE:" "${BUILD_META_FILE}"
+    printf "  %-24s %s\n" "BUILD_PROJECT_NAME:" "${BUILD_PROJECT_NAME}"
+    printf "  %-24s %s\n" "BUILD_RELEASE:" "${BUILD_RELEASE}"
+    printf "  %-24s %s\n" "BUILD_ID:" "${BUILD_ID}"
+    printf "  %-24s %s\n" "BUILD_ARTIFACT_NAME:" "${BUILD_ARTIFACT_NAME}"
+    printf "  %-24s %s\n" "BUILD_TIME:" "${BUILD_TIME}"
+    printf "\n"
+    printf "  %-24s %s\n" "BUILD_YOCTO_MACHINE:" "${BUILD_YOCTO_MACHINE}"
+    printf "  %-24s %s\n" "BUILD_YOCTO_IMAGE:" "${BUILD_YOCTO_IMAGE}"
+    printf "  %-24s %s\n" "BUILD_YOCTO_BUILDDIR:" "${BUILD_YOCTO_BUILDDIR}"
+    printf "\n"
+    printf "  %-24s %s\n" "BUILD_ARTIFACT_FILE:" "${BUILD_ARTIFACT_FILE}"
+    printf "  %-24s %s\n" "BUILD_ARTIFACT_SIZE:" "${BUILD_ARTIFACT_SIZE}"
+    printf "  %-24s %s\n" "BUILD_ARTIFACT_SHA256:" "${BUILD_ARTIFACT_SHA256}"
+    printf "\n"
+    printf "  %-24s %s\n" "BUILD_DISK_IMAGE_FILE:" "${BUILD_DISK_IMAGE_FILE}"
+    printf "  %-24s %s\n" "BUILD_DISK_IMAGE_SIZE:" "${BUILD_DISK_IMAGE_SIZE}"
+    printf "  %-24s %s\n" "BUILD_DISK_IMAGE_SHA256:" "${BUILD_DISK_IMAGE_SHA256}"
+    printf "\n"
+    printf "  %-24s %s\n" "BUILD_GIT_BRANCH:" "${BUILD_GIT_BRANCH:-<not available>}"
+    printf "  %-24s %s\n" "BUILD_GIT_COMMIT:" "${BUILD_GIT_COMMIT:-<not available>}"
+    printf "  %-24s %s\n" "BUILD_GIT_DIRTY:" "${BUILD_GIT_DIRTY}"
+    printf "\n"
+}
+
+
+check_build_usage()
+{
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Validate and display information for the most recent local build.
+
+Options:
+  -q, --quiet     Validate metadata and files without printing build details
+  -j, --json      Print the original build.meta.json
+  -v, --verify    Verify file sizes, SHA256 checksums and Artifact name
+  -h, --help      Show this help
+
+Library usage:
+  source "\${SCRIPTS_DIR}/check-build"
+  check_build_load
+  check_build_verify
+
+After check_build_load, deployment scripts can use:
+  BUILD_ARTIFACT_NAME
+  BUILD_ARTIFACT_FILE
+  BUILD_ARTIFACT_SHA256
+  BUILD_YOCTO_MACHINE
+EOF
+}
+
+
+# ---------------------------------------------------------------------------
+# Command-line entry point
+# ---------------------------------------------------------------------------
+
+check_build_main()
+{
+    local quiet=false
+    local output_json=false
+    local verify=false
+
+    while (($# > 0)); do
+        case "$1" in
+            -q|--quiet)
+                quiet=true
+                ;;
+            -j|--json)
+                output_json=true
+                ;;
+            -v|--verify)
+                verify=true
+                ;;
+            -h|--help)
+                check_build_usage
+                return 0
+                ;;
+            *)
+                check_build_error "Unknown option: $1"
+                check_build_usage >&2
+                return 1
+                ;;
+        esac
+
+        shift
+    done
+
+    if [[ "${verify}" == true ]]; then
+        check_build_verify || return 1
+    else
+        check_build_load || return 1
+        check_build_validate_paths || return 1
+        check_build_validate_sizes || return 1
+    fi
+
+    if [[ "${output_json}" == true ]]; then
+        jq . "${BUILD_META_FILE}"
+    elif [[ "${quiet}" != true ]]; then
+        check_build_print
+
+        if [[ "${verify}" == true ]]; then
+            echo "Build verification passed."
+            echo
+        else
+            echo "Build metadata and output files are valid."
+            echo "Run 'check-build --verify' for SHA256 verification."
+            echo
+        fi
+    fi
+}
+
+
+# Execute only when run directly. When sourced, expose the functions above.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    set -euo pipefail
+    check_build_main "$@"
+fi
