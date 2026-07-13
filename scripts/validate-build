@@ -18,6 +18,7 @@
 #   -s, --service <name>        Require a systemd service to be active.
 #                               May be specified multiple times.
 #       --skip-artifact-check   Do not compare the running Artifact name
+#       --refresh-host-key      Remove the stored SSH host key before connecting
 #   -q, --quiet                 Print only errors and the final result
 #   -h, --help                  Show this help
 #
@@ -34,6 +35,7 @@ DEVICE_USER="${DEVICE_SSH_USER:-}"
 SSH_PORT=22
 SSH_TIMEOUT=10
 SKIP_ARTIFACT_CHECK=false
+REFRESH_HOST_KEY=false
 QUIET=false
 REQUIRED_SERVICES=()
 
@@ -71,6 +73,8 @@ Options:
   -s, --service <name>        Require a systemd service to be active.
                               May be specified multiple times.
       --skip-artifact-check   Do not compare the running Artifact name
+      --refresh-host-key      Remove the stored SSH host key before connecting.
+                              Use after reflashing or replacing the device.
   -q, --quiet                 Print only errors and the final result
   -h, --help                  Show this help
 
@@ -79,6 +83,7 @@ Examples:
   $(basename "$0") --service my-application.service
   $(basename "$0") -H 192.168.0.82 -u root
   $(basename "$0") --skip-artifact-check
+  $(basename "$0") --refresh-host-key
 EOF
 }
 
@@ -158,6 +163,10 @@ while (($# > 0)); do
             SKIP_ARTIFACT_CHECK=true
             shift
             ;;
+        --refresh-host-key)
+            REFRESH_HOST_KEY=true
+            shift
+            ;;
         -q|--quiet)
             QUIET=true
             shift
@@ -228,6 +237,33 @@ check_build_validate_sizes
 
 
 # ---------------------------------------------------------------------------
+# Optional SSH host-key refresh
+# ---------------------------------------------------------------------------
+
+if [[ "${REFRESH_HOST_KEY}" == true ]]; then
+    if ! command -v ssh-keygen >/dev/null 2>&1; then
+        error "ssh-keygen is required for --refresh-host-key."
+        exit 1
+    fi
+
+    info "Removing the stored SSH host key for ${DEVICE_HOST}..."
+
+    ssh-keygen \
+        -f "${HOME}/.ssh/known_hosts" \
+        -R "${DEVICE_HOST}" \
+        >/dev/null 2>&1 || true
+
+    # OpenSSH stores non-default ports using the [host]:port form.
+    if [[ "${SSH_PORT}" != "22" ]]; then
+        ssh-keygen \
+            -f "${HOME}/.ssh/known_hosts" \
+            -R "[${DEVICE_HOST}]:${SSH_PORT}" \
+            >/dev/null 2>&1 || true
+    fi
+fi
+
+
+# ---------------------------------------------------------------------------
 # SSH configuration
 # ---------------------------------------------------------------------------
 
@@ -254,10 +290,37 @@ info
 
 info "Checking SSH connectivity..."
 
-if ! run_remote "true"; then
-    error "Unable to connect to ${DEVICE_USER}@${DEVICE_HOST}:${SSH_PORT}"
+ssh_error_file="$(mktemp)"
+
+cleanup_ssh_error()
+{
+    rm -f "${ssh_error_file}"
+}
+
+trap cleanup_ssh_error EXIT
+
+if ! run_remote "true" 2>"${ssh_error_file}"; then
+    if grep -q \
+        -e 'REMOTE HOST IDENTIFICATION HAS CHANGED' \
+        -e 'Host key verification failed' \
+        "${ssh_error_file}"
+    then
+        cat "${ssh_error_file}" >&2
+        error "The stored SSH host key does not match the device."
+        error "This commonly happens after reflashing the device."
+        error
+        error "Verify that ${DEVICE_HOST} is the expected device, then run:"
+        error "  $(basename "$0") --refresh-host-key"
+    else
+        cat "${ssh_error_file}" >&2
+        error "Unable to connect to ${DEVICE_USER}@${DEVICE_HOST}:${SSH_PORT}"
+    fi
+
     exit 1
 fi
+
+rm -f "${ssh_error_file}"
+trap - EXIT
 
 info "SSH connectivity: OK"
 
