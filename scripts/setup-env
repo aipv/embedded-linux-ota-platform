@@ -213,7 +213,27 @@ CONF_DIR="${BUILDDIR}/conf"
 DEPLOY_DIR_IMAGE="${BUILDDIR}/tmp/deploy/images/${YOCTO_MACHINE}"
 BUILD_META_FILE="${BUILDDIR}/build.meta.json"
 PROJECT_INC="${CONF_DIR}/project.inc"
-BUILD_INC="${CONF_DIR}/build.inc"
+
+# ---------------------------------------------------------------------------
+# Initialize default project.inc
+# ---------------------------------------------------------------------------
+
+PROJECT_INC_TEMPLATE="${YOCTO_TEMPLATE_DIR}/project.inc.sample"
+
+if [[ ! -f "${PROJECT_INC_TEMPLATE}" ]]; then
+    _setup_error "project.inc sample not found: ${PROJECT_INC_TEMPLATE}"
+    return 1
+fi
+
+if [[ ! -f "${PROJECT_INC}" ]]; then
+    cp "${PROJECT_INC_TEMPLATE}" "${PROJECT_INC}" || {
+        _setup_error "Failed to create ${PROJECT_INC}"
+        return 1
+    }
+
+    echo "Created default BitBake project configuration:"
+    echo "  ${PROJECT_INC}"
+fi
 
 _prepend_path_once "${SCRIPTS_DIR}"
 
@@ -228,7 +248,6 @@ export CONF_DIR
 export DEPLOY_DIR_IMAGE
 export BUILD_META_FILE
 export PROJECT_INC
-export BUILD_INC
 export PATH
 
 # Export project.conf values used by subsequent shell scripts.
@@ -268,7 +287,6 @@ _print_environment_variable BUILDDIR
 _print_environment_variable CONF_DIR
 _print_environment_variable DEPLOY_DIR_IMAGE
 _print_environment_variable PROJECT_INC
-_print_environment_variable BUILD_INC
 _print_environment_variable BUILD_META_FILE
 
 echo
