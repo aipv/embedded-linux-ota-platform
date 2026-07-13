@@ -1,5 +1,5 @@
 #
-# Local configuration for the Yocto Raspberry Pi Mender Demo
+# Local configuration for the Embedded Linux OTA Platform
 #
 
 # Enable Yocto build support
