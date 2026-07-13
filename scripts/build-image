@@ -310,7 +310,7 @@ if [[ ! -d "${DEPLOY_DIR_IMAGE}" ]]; then
     exit 1
 fi
 
-ARTIFACT_FILE="${DEPLOY_DIR_IMAGE}/${MENDER_ARTIFACT_NAME}.mender"
+ARTIFACT_FILE="${DEPLOY_DIR_IMAGE}/${YOCTO_IMAGE}-${YOCTO_MACHINE}.mender"
 
 if [[ ! -f "${ARTIFACT_FILE}" ]]; then
     error "Mender Artifact was not generated:"
