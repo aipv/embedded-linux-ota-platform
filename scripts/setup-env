@@ -1,0 +1,320 @@
+#!/usr/bin/env bash
+#
+# Embedded Linux OTA Platform environment setup
+#
+# Usage:
+#   source setup-environment
+#
+# Responsibilities:
+#   1. Load project.conf and optional local secrets.
+#   2. Initialize the Yocto/BitBake environment.
+#   3. Export common paths and project variables for subsequent shell scripts.
+#   4. Add the project scripts directory to PATH.
+#   5. Print an environment summary.
+#
+
+# ---------------------------------------------------------------------------
+# Ensure this script is sourced
+# ---------------------------------------------------------------------------
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    echo "Error: setup-environment must be sourced, not executed." >&2
+    echo "Usage: source setup-environment" >&2
+    exit 1
+fi
+
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+_setup_error()
+{
+    echo "Error: $*" >&2
+    return 1
+}
+
+_setup_warning()
+{
+    echo "Warning: $*" >&2
+}
+
+_require_variable()
+{
+    local variable_name="$1"
+
+    if [[ -z "${!variable_name:-}" ]]; then
+        _setup_error "${variable_name} is not defined or is empty"
+        return 1
+    fi
+}
+
+_print_environment_variable()
+{
+    local variable_name="$1"
+    local variable_value="${!variable_name:-<not set>}"
+
+    printf "  %-28s %s\n" "${variable_name}:" "${variable_value}"
+}
+
+_prepend_path_once()
+{
+    local directory="$1"
+
+    case ":${PATH}:" in
+        *":${directory}:"*) ;;
+        *) PATH="${directory}:${PATH}" ;;
+    esac
+}
+
+
+# ---------------------------------------------------------------------------
+# Locate the project root
+# ---------------------------------------------------------------------------
+
+_SETUP_ENV_PATH="${BASH_SOURCE[0]}"
+
+while [[ -L "${_SETUP_ENV_PATH}" ]]; do
+    _SETUP_ENV_DIR="$(
+        cd -P "$(dirname "${_SETUP_ENV_PATH}")" >/dev/null 2>&1 &&
+        pwd
+    )" || return 1
+
+    _SETUP_ENV_PATH="$(readlink "${_SETUP_ENV_PATH}")"
+
+    if [[ "${_SETUP_ENV_PATH}" != /* ]]; then
+        _SETUP_ENV_PATH="${_SETUP_ENV_DIR}/${_SETUP_ENV_PATH}"
+    fi
+done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+PROJECT_CONFIG="${PROJECT_DIR}/project.conf"
+SECRETS_CONFIG="${PROJECT_DIR}/certificates/secrets.conf"
+SCRIPTS_DIR="${PROJECT_DIR}/scripts"
+YOCTO_INIT_SCRIPT="${PROJECT_DIR}/ext/poky/oe-init-build-env"
+YOCTO_TEMPLATE_DIR="${PROJECT_DIR}/meta-ota-platform/conf/templates/default"
+
+
+# ---------------------------------------------------------------------------
+# Load global project configuration
+# ---------------------------------------------------------------------------
+
+if [[ ! -f "${PROJECT_CONFIG}" ]]; then
+    _setup_error "Project configuration not found: ${PROJECT_CONFIG}"
+    return 1
+fi
+
+# shellcheck source=/dev/null
+source "${PROJECT_CONFIG}" || {
+    _setup_error "Failed to source ${PROJECT_CONFIG}"
+    return 1
+}
+
+
+# ---------------------------------------------------------------------------
+# Load optional local secrets
+# ---------------------------------------------------------------------------
+
+if [[ -f "${SECRETS_CONFIG}" ]]; then
+    # shellcheck source=/dev/null
+    source "${SECRETS_CONFIG}" || {
+        _setup_error "Failed to source ${SECRETS_CONFIG}"
+        return 1
+    }
+else
+    _setup_warning "Optional secrets file not found: ${SECRETS_CONFIG}"
+fi
+
+
+# ---------------------------------------------------------------------------
+# Validate project configuration and source tree
+# ---------------------------------------------------------------------------
+
+for variable_name in \
+    PROJECT_NAME \
+    YOCTO_BUILD_DIR \
+    YOCTO_MACHINE \
+    YOCTO_IMAGE \
+    MENDER_SERVER_URL
+do
+    _require_variable "${variable_name}" || return 1
+done
+
+if [[ ! -f "${YOCTO_INIT_SCRIPT}" ]]; then
+    _setup_error "Yocto initialization script not found: ${YOCTO_INIT_SCRIPT}"
+    _setup_error "Initialize the Git submodules before continuing."
+    return 1
+fi
+
+if [[ ! -d "${SCRIPTS_DIR}" ]]; then
+    _setup_error "Scripts directory not found: ${SCRIPTS_DIR}"
+    return 1
+fi
+
+if [[ ! -d "${YOCTO_TEMPLATE_DIR}" ]]; then
+    _setup_error "Yocto configuration template not found: ${YOCTO_TEMPLATE_DIR}"
+    return 1
+fi
+
+if [[ ! -f "${YOCTO_TEMPLATE_DIR}/local.conf.sample" ]]; then
+    _setup_error "local.conf.sample not found in ${YOCTO_TEMPLATE_DIR}"
+    return 1
+fi
+
+if [[ ! -f "${YOCTO_TEMPLATE_DIR}/bblayers.conf.sample" ]]; then
+    _setup_error "bblayers.conf.sample not found in ${YOCTO_TEMPLATE_DIR}"
+    return 1
+fi
+
+
+# ---------------------------------------------------------------------------
+# Resolve the requested Yocto build directory
+# ---------------------------------------------------------------------------
+
+if [[ "${YOCTO_BUILD_DIR}" == /* ]]; then
+    YOCTO_BUILD_PATH="${YOCTO_BUILD_DIR}"
+else
+    YOCTO_BUILD_PATH="${PROJECT_DIR}/${YOCTO_BUILD_DIR}"
+fi
+
+
+# ---------------------------------------------------------------------------
+# Initialize the Yocto build environment
+# ---------------------------------------------------------------------------
+
+export TEMPLATECONF="${YOCTO_TEMPLATE_DIR}"
+
+cd "${PROJECT_DIR}" || {
+    _setup_error "Unable to enter project directory: ${PROJECT_DIR}"
+    return 1
+}
+
+# oe-init-build-env changes the current directory to BUILDDIR and updates
+# PATH, BBPATH, PYTHONPATH and other BitBake-related environment variables.
+# shellcheck source=/dev/null
+source "${YOCTO_INIT_SCRIPT}" "${YOCTO_BUILD_PATH}" || {
+    _setup_error "Failed to initialize the Yocto build environment"
+    return 1
+}
+
+if [[ -z "${BUILDDIR:-}" ]]; then
+    _setup_error "oe-init-build-env did not define BUILDDIR"
+    return 1
+fi
+
+
+# ---------------------------------------------------------------------------
+# Export paths used by subsequent shell scripts
+# ---------------------------------------------------------------------------
+
+CONF_DIR="${BUILDDIR}/conf"
+DEPLOY_DIR_IMAGE="${BUILDDIR}/tmp/deploy/images/${YOCTO_MACHINE}"
+BUILD_META_FILE="${BUILDDIR}/build.meta.json"
+PROJECT_INC="${CONF_DIR}/project.inc"
+BUILD_INC="${CONF_DIR}/build.inc"
+
+_prepend_path_once "${SCRIPTS_DIR}"
+
+export PROJECT_DIR
+export PROJECT_CONFIG
+export SECRETS_CONFIG
+export SCRIPTS_DIR
+export YOCTO_INIT_SCRIPT
+export YOCTO_TEMPLATE_DIR
+export YOCTO_BUILD_PATH
+export CONF_DIR
+export DEPLOY_DIR_IMAGE
+export BUILD_META_FILE
+export PROJECT_INC
+export BUILD_INC
+export PATH
+
+# Export project.conf values used by subsequent shell scripts.
+export PROJECT_NAME
+export YOCTO_BUILD_DIR
+export YOCTO_MACHINE
+export YOCTO_IMAGE
+export MENDER_SERVER_URL
+export MENDER_SERVER_HOST_IP
+export MENDER_SERVER_CRT
+export DEVICE_SSH_USER
+export DEVICE_IP_ADDRESS
+export DEVICE_MENDER_ID
+
+# These values may be provided by certificates/secrets.conf.
+export MENDER_TENANT_TOKEN
+export MENDER_ACCESS_TOKEN
+
+
+# ---------------------------------------------------------------------------
+# Print environment summary
+# ---------------------------------------------------------------------------
+
+echo
+echo "Embedded Linux OTA Platform environment"
+echo "======================================="
+echo
+
+_print_environment_variable PROJECT_NAME
+_print_environment_variable PROJECT_DIR
+_print_environment_variable PROJECT_CONFIG
+_print_environment_variable SECRETS_CONFIG
+_print_environment_variable SCRIPTS_DIR
+
+echo
+_print_environment_variable BUILDDIR
+_print_environment_variable CONF_DIR
+_print_environment_variable DEPLOY_DIR_IMAGE
+_print_environment_variable PROJECT_INC
+_print_environment_variable BUILD_INC
+_print_environment_variable BUILD_META_FILE
+
+echo
+_print_environment_variable YOCTO_MACHINE
+_print_environment_variable YOCTO_IMAGE
+_print_environment_variable TEMPLATECONF
+_print_environment_variable MENDER_SERVER_URL
+
+echo
+printf "  %-28s %s\n" "PATH:" "+ ${SCRIPTS_DIR}"
+printf "  %-28s %s\n" "CURRENT_DIRECTORY:" "${PWD}"
+
+echo
+if [[ -n "${MENDER_TENANT_TOKEN:-}" ]]; then
+    printf "  %-28s %s\n" "MENDER_TENANT_TOKEN:" "<configured>"
+else
+    printf "  %-28s %s\n" "MENDER_TENANT_TOKEN:" "<not configured>"
+fi
+
+if [[ -n "${MENDER_ACCESS_TOKEN:-}" ]]; then
+    printf "  %-28s %s\n" "MENDER_ACCESS_TOKEN:" "<configured>"
+else
+    printf "  %-28s %s\n" "MENDER_ACCESS_TOKEN:" "<not configured>"
+fi
+
+echo
+echo "Environment initialized."
+echo
+echo "Available project commands:"
+
+# Only display executable files from scripts/. This keeps the summary correct
+# as commands are added or removed from the project.
+while IFS= read -r command_path; do
+    printf "  %s\n" "$(basename "${command_path}")"
+done < <(
+    find "${SCRIPTS_DIR}" \
+        -maxdepth 1 \
+        -type f \
+        -perm -u+x \
+        -print |
+        sort
+)
+
+echo
+
+# Do not leave setup-only implementation variables in the caller's shell.
+unset _SETUP_ENV_PATH _SETUP_ENV_DIR
+unset -f _setup_error _setup_warning _require_variable
+unset -f _print_environment_variable _prepend_path_once

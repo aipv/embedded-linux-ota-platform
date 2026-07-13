@@ -1,0 +1,287 @@
+#!/usr/bin/env bash
+#
+# build-image
+#
+# Generate the BitBake project configuration and build the configured Yocto
+# image.
+#
+# Prerequisite:
+#   source setup-env
+#
+# Usage:
+#   build-image [options]
+#
+# Options:
+#   -r <release>     Set IMAGE_RELEASE. Default: dev
+#   -b <build_id>    Set IMAGE_BUILD_ID.
+#                    Default: current UTC time in YYYYMMDDHHMMSS format
+#   -h               Show this help
+#
+# Examples:
+#   build-image
+#   build-image -r prod
+#   build-image -b v1.0.0
+#   build-image -r prod -b v1.0.0
+#
+
+set -euo pipefail
+
+
+# ---------------------------------------------------------------------------
+# Default command-line values
+# ---------------------------------------------------------------------------
+
+RELEASE="dev"
+BUILD_ID=""
+
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+usage()
+{
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Generate project.inc and build the configured Yocto image.
+
+Options:
+  -r <release>     Set IMAGE_RELEASE. Default: dev
+  -b <build_id>    Set IMAGE_BUILD_ID.
+                   Default: current UTC time in YYYYMMDDHHMMSS format
+  -h               Show this help
+
+Examples:
+  $(basename "$0")
+  $(basename "$0") -r prod
+  $(basename "$0") -b v1.0.0
+  $(basename "$0") -r prod -b v1.0.0
+EOF
+}
+
+
+error()
+{
+    echo "Error: $*" >&2
+}
+
+
+require_variable()
+{
+    local variable_name="$1"
+
+    if [[ -z "${!variable_name:-}" ]]; then
+        error "${variable_name} is not set."
+        error "Run 'source setup-env' before running $(basename "$0")."
+        exit 1
+    fi
+}
+
+
+# Escape a value before writing it into a double-quoted BitBake assignment.
+bitbake_escape()
+{
+    local value="$1"
+
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\n'/\\n}"
+    value="${value//$'\r'/\\r}"
+
+    printf '%s' "${value}"
+}
+
+
+# Reject values that would produce unsafe or ambiguous artifact names.
+validate_name_component()
+{
+    local variable_name="$1"
+    local value="$2"
+
+    if [[ -z "${value}" ]]; then
+        error "${variable_name} must not be empty."
+        exit 1
+    fi
+
+    if [[ ! "${value}" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+        error "${variable_name} contains unsupported characters: ${value}"
+        error "Allowed characters: letters, numbers, '.', '_', '+', and '-'."
+        exit 1
+    fi
+}
+
+
+# ---------------------------------------------------------------------------
+# Parse command-line options
+# ---------------------------------------------------------------------------
+
+while getopts ":r:b:h" option; do
+    case "${option}" in
+        r)
+            RELEASE="${OPTARG}"
+            ;;
+        b)
+            BUILD_ID="${OPTARG}"
+            ;;
+        h)
+            usage
+            exit 0
+            ;;
+        :)
+            error "Option -${OPTARG} requires an argument."
+            usage >&2
+            exit 1
+            ;;
+        \?)
+            error "Unknown option: -${OPTARG}"
+            usage >&2
+            exit 1
+            ;;
+    esac
+done
+
+shift $((OPTIND - 1))
+
+if (($# > 0)); then
+    error "Unexpected argument: $1"
+    usage >&2
+    exit 1
+fi
+
+
+# ---------------------------------------------------------------------------
+# Validate the initialized build environment
+# ---------------------------------------------------------------------------
+
+require_variable PROJECT_NAME
+require_variable PROJECT_DIR
+require_variable PROJECT_CONFIG
+require_variable BUILDDIR
+require_variable CONF_DIR
+require_variable PROJECT_INC
+require_variable YOCTO_MACHINE
+require_variable YOCTO_IMAGE
+require_variable MENDER_SERVER_URL
+
+if ! command -v bitbake >/dev/null 2>&1; then
+    error "The bitbake command is not available."
+    error "Run 'source setup-env' before running $(basename "$0")."
+    exit 1
+fi
+
+if [[ ! -d "${CONF_DIR}" ]]; then
+    error "Yocto configuration directory does not exist: ${CONF_DIR}"
+    exit 1
+fi
+
+if [[ "${PROJECT_INC}" != "${CONF_DIR}/project.inc" ]]; then
+    error "PROJECT_INC has an unexpected value: ${PROJECT_INC}"
+    error "Expected: ${CONF_DIR}/project.inc"
+    exit 1
+fi
+
+
+# ---------------------------------------------------------------------------
+# Resolve dynamic build information
+# ---------------------------------------------------------------------------
+
+if [[ -z "${BUILD_ID}" ]]; then
+    BUILD_ID="$(date -u +%Y%m%d%H%M%S)"
+fi
+
+validate_name_component PROJECT_NAME "${PROJECT_NAME}"
+validate_name_component IMAGE_RELEASE "${RELEASE}"
+validate_name_component IMAGE_BUILD_ID "${BUILD_ID}"
+
+IMAGE_RELEASE="${RELEASE}"
+IMAGE_BUILD_ID="${BUILD_ID}"
+MENDER_ARTIFACT_NAME="${PROJECT_NAME}-${IMAGE_RELEASE}-${IMAGE_BUILD_ID}"
+
+export IMAGE_RELEASE
+export IMAGE_BUILD_ID
+export MENDER_ARTIFACT_NAME
+
+
+# ---------------------------------------------------------------------------
+# Resolve project configuration values used by BitBake
+# ---------------------------------------------------------------------------
+
+MENDER_SERVER_HOST_IP="${MENDER_SERVER_HOST_IP:-}"
+MENDER_SERVER_CRT="${MENDER_SERVER_CRT:-}"
+
+if [[ -n "${MENDER_SERVER_CRT}" && "${MENDER_SERVER_CRT}" != /* ]]; then
+    MENDER_SERVER_CRT="${PROJECT_DIR}/${MENDER_SERVER_CRT}"
+fi
+
+
+# ---------------------------------------------------------------------------
+# Generate project.inc atomically
+# ---------------------------------------------------------------------------
+
+temporary_project_inc="$(mktemp "${PROJECT_INC}.XXXXXX")"
+
+cleanup()
+{
+    rm -f "${temporary_project_inc:-}"
+}
+
+trap cleanup EXIT
+
+cat > "${temporary_project_inc}" <<EOF
+# ---------------------------------------------------------------------------
+# Auto-generated by $(basename "$0").
+# Do not edit this file manually.
+# Source configuration: ${PROJECT_CONFIG}
+# ---------------------------------------------------------------------------
+
+# Project
+PROJECT_ROOT = "$(bitbake_escape "${PROJECT_DIR}")"
+PROJECT_NAME = "$(bitbake_escape "${PROJECT_NAME}")"
+
+# Yocto build
+MACHINE = "$(bitbake_escape "${YOCTO_MACHINE}")"
+YOCTO_IMAGE = "$(bitbake_escape "${YOCTO_IMAGE}")"
+
+# Mender server
+PROJECT_MENDER_SERVER_URL = "$(bitbake_escape "${MENDER_SERVER_URL}")"
+PROJECT_MENDER_SERVER_HOST_IP = "$(bitbake_escape "${MENDER_SERVER_HOST_IP}")"
+PROJECT_MENDER_SERVER_CRT = "$(bitbake_escape "${MENDER_SERVER_CRT}")"
+
+# Dynamic build information
+IMAGE_RELEASE = "$(bitbake_escape "${IMAGE_RELEASE}")"
+IMAGE_BUILD_ID = "$(bitbake_escape "${IMAGE_BUILD_ID}")"
+MENDER_ARTIFACT_NAME = "$(bitbake_escape "${MENDER_ARTIFACT_NAME}")"
+EOF
+
+mv "${temporary_project_inc}" "${PROJECT_INC}"
+trap - EXIT
+
+
+# ---------------------------------------------------------------------------
+# Print build configuration
+# ---------------------------------------------------------------------------
+
+echo
+echo "Yocto image build"
+echo "================="
+printf "  %-24s %s\n" "PROJECT_NAME:" "${PROJECT_NAME}"
+printf "  %-24s %s\n" "YOCTO_MACHINE:" "${YOCTO_MACHINE}"
+printf "  %-24s %s\n" "YOCTO_IMAGE:" "${YOCTO_IMAGE}"
+printf "  %-24s %s\n" "IMAGE_RELEASE:" "${IMAGE_RELEASE}"
+printf "  %-24s %s\n" "IMAGE_BUILD_ID:" "${IMAGE_BUILD_ID}"
+printf "  %-24s %s\n" "MENDER_ARTIFACT_NAME:" "${MENDER_ARTIFACT_NAME}"
+printf "  %-24s %s\n" "PROJECT_INC:" "${PROJECT_INC}"
+echo
+
+
+# ---------------------------------------------------------------------------
+# Build the image
+# ---------------------------------------------------------------------------
+
+bitbake "${YOCTO_IMAGE}"
+
+echo
+echo "Build completed successfully."
+printf "  %-24s %s\n" "MENDER_ARTIFACT_NAME:" "${MENDER_ARTIFACT_NAME}"
+echo
