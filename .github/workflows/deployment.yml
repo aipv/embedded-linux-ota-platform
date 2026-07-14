@@ -1,0 +1,124 @@
+name: Deployment Branch OTA Test
+
+on:
+  push:
+    branches:
+      - deployment
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Artifact release name
+        required: true
+        default: deployment
+        type: string
+      refresh_host_key:
+        description: Refresh SSH host key after reflashing
+        required: true
+        default: false
+        type: boolean
+      skip_upload:
+        description: Skip Artifact upload
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ota-test-device
+  cancel-in-progress: false
+
+jobs:
+  deploy-and-test:
+    name: Build, deploy, and validate device
+    runs-on: [self-hosted, linux, x64, yocto]
+    timeout-minutes: 360
+    environment: ota-test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          clean: true
+          persist-credentials: false
+
+      - name: Restore local certificate and credentials
+        shell: bash
+        run: |
+          install -d -m 700 certificates
+          install -m 600 /home/test/workspace/embedded-linux-ota-platform/certificates/mender.crt certificates/mender.crt
+          install -m 600 /home/test/workspace/embedded-linux-ota-platform/certificates/secrets.conf certificates/secrets.conf
+
+          openssl x509             -in certificates/mender.crt             -noout             -subject             -issuer             -dates
+
+      - name: Run shell checks
+        shell: bash
+        run: scripts/ci-shell-check
+
+      - name: Run Yocto metadata checks
+        shell: bash
+        run: |
+          source scripts/setup-env
+          ci-yocto-check
+
+      - name: Run complete OTA test pipeline
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_RELEASE: ${{ inputs.release }}
+          INPUT_REFRESH_HOST_KEY: ${{ inputs.refresh_host_key }}
+          INPUT_SKIP_UPLOAD: ${{ inputs.skip_upload }}
+        run: |
+          set -eo pipefail
+          source scripts/setup-env
+          set -u
+
+          release="deployment"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${INPUT_RELEASE}" ]]; then
+            release="${INPUT_RELEASE}"
+          fi
+
+          args=(
+            --release "${release}"
+            --build-id "${GITHUB_RUN_NUMBER}-${GITHUB_SHA::8}"
+            --log-dir "${PROJECT_DIR}/pipeline-logs"
+            --yes
+          )
+
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" &&
+                "${INPUT_REFRESH_HOST_KEY}" == "true" ]]; then
+            args+=(--refresh-host-key)
+          fi
+
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" &&
+                "${INPUT_SKIP_UPLOAD}" == "true" ]]; then
+            args+=(--skip-upload)
+          fi
+
+          test-pipeline "${args[@]}"
+
+      - name: Collect deployment reports
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-reports
+
+          [[ ! -f build/build.meta.json ]] || cp build/build.meta.json ci-reports/
+          [[ ! -f build/deployment.meta.json ]] || cp build/deployment.meta.json ci-reports/
+          [[ ! -d pipeline-logs ]] || cp -a pipeline-logs ci-reports/
+
+          git status --short > ci-reports/git-status.txt
+          git submodule status --recursive > ci-reports/submodules.txt
+
+      - name: Upload deployment reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: deployment-test-${{ github.run_number }}
+          path: ci-reports/
+          if-no-files-found: warn
+          retention-days: 30
