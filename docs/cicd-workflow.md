@@ -3,6 +3,17 @@
 This document describes the GitHub Actions integration used by the
 **Embedded Linux OTA Platform**.
 
+<p align="center">
+  <img
+    src="images/cicd-architecture.svg"
+    alt="Embedded Linux OTA Platform CI/CD architecture"
+    width="800"
+  />
+</p>
+
+The CI/CD workflow connects the development PC, GitHub repository,
+self-hosted Yocto builder, Mender OTA server, and Raspberry Pi test device.
+
 The CI/CD implementation is split into two workflows:
 
 ```text
@@ -14,19 +25,6 @@ The CI/CD implementation is split into two workflows:
 - `ci.yml` validates the repository and produces a verified Yocto build.
 - `deployment.yml` builds, deploys, monitors, and validates an OTA update on
   the physical test device.
-
-## CI/CD Architecture
-
-<p align="center">
-  <img
-    src="images/cicd-architecture.svg"
-    alt="Embedded Linux OTA Platform CI/CD architecture"
-    width="800"
-  />
-</p>
-
-The CI/CD workflow connects the development PC, GitHub repository,
-self-hosted Yocto builder, Mender OTA server, and Raspberry Pi test device.
 
 ---
 
