@@ -1,6 +1,39 @@
 # Embedded Linux OTA Platform
 
+[![CI](https://github.com/aipv/embedded-linux-ota-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/aipv/embedded-linux-ota-platform/actions/workflows/ci.yml)
+[![Deployment](https://github.com/aipv/embedded-linux-ota-platform/actions/workflows/deployment.yml/badge.svg)](https://github.com/aipv/embedded-linux-ota-platform/actions/workflows/deployment.yml)
+![Yocto](https://img.shields.io/badge/Yocto-Scarthgap-blue)
+![Mender](https://img.shields.io/badge/Mender-OTA-success)
+![GitHub Actions](https://img.shields.io/badge/CI/CD-GitHub%20Actions-success)
+
 Embedded Linux OTA Platform is a reference project for building, deploying, and validating **Over-the-Air (OTA)** software updates using the **Yocto Project** and **Mender**.
+
+## Project Status
+
+- ✅ Yocto image build
+- ✅ Mender Artifact generation
+- ✅ OTA deployment
+- ✅ Runtime validation
+- ✅ GitHub Actions CI
+- ✅ Self-hosted GitHub Runner
+- ✅ End-to-end OTA workflow
+
+## Build Status
+
+| Workflow | Status |
+|----------|--------|
+| CI | ![CI](https://github.com/aipv/embedded-linux-ota-platform/actions/workflows/ci.yml/badge.svg) |
+| Deployment | ![Deployment](https://github.com/aipv/embedded-linux-ota-platform/actions/workflows/deployment.yml/badge.svg) |
+
+
+## CI/CD Architecture
+
+The complete GitHub Actions workflow is described in
+[docs/cicd-workflow.md](docs/cicd-workflow.md).
+
+<p align="center">
+  <img src="docs/images/cicd-workflow.svg" width="900">
+</p>
 
 ## Features
 
@@ -99,6 +132,7 @@ validate-build
 | `docs/installation.md`   | Development environment installation |
 | `docs/configuration.md`  | Project configuration                |
 | `docs/ota-workflow.md`   | OTA workflow                         |
+| `docs/cicd-workflow.md`  | GitHub Actions CI/CD workflow        |
 | `scripts/README.md`      | Command reference                    |
 | `certificates/README.md` | Certificates and credentials         |
 
