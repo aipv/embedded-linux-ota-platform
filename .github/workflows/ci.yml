@@ -1,0 +1,127 @@
+name: OTA Platform CI
+
+on:
+  push:
+    branches:
+      - master
+      - ci-workflow
+
+  pull_request:
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ota-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell-check:
+    name: Shell checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck shfmt
+
+      - name: Run shell checks
+        shell: bash
+        run: |
+          scripts/ci-shell-check
+
+  yocto-check:
+    name: Yocto metadata checks
+    needs: shell-check
+
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - yocto
+
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          clean: true
+
+      - name: Initialize Yocto and check metadata
+        shell: bash
+        run: |
+          source scripts/setup-env
+          ci-yocto-check
+
+  build-check:
+    name: Build verification
+    needs: yocto-check
+
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - yocto
+
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          clean: true
+
+      - name: Build and verify image
+        shell: bash
+        run: |
+          source scripts/setup-env
+
+          ci-build-check \
+            --release ci \
+            --build-id "${GITHUB_RUN_NUMBER}-${GITHUB_SHA::8}" \
+            --log-dir "${PROJECT_DIR}/pipeline-logs"
+
+      - name: Collect reports
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p ci-reports
+
+          if [[ -f build/build.meta.json ]]; then
+            cp build/build.meta.json ci-reports/
+          fi
+
+          if [[ -d pipeline-logs ]]; then
+            cp -a pipeline-logs ci-reports/
+          fi
+
+          git submodule status --recursive \
+            > ci-reports/submodules.txt
+
+          git status --short \
+            > ci-reports/git-status.txt
+
+      - name: Upload CI reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ota-ci-reports-${{ github.run_number }}
+          path: ci-reports/
+          if-no-files-found: warn
+          retention-days: 14
