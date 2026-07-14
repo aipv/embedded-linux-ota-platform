@@ -72,8 +72,9 @@ jobs:
           INPUT_REFRESH_HOST_KEY: ${{ inputs.refresh_host_key }}
           INPUT_SKIP_UPLOAD: ${{ inputs.skip_upload }}
         run: |
-          set -euo pipefail
+          set -eo pipefail
           source scripts/setup-env
+          set -u
 
           release="deployment"
           if [[ "${EVENT_NAME}" == "workflow_dispatch" && -n "${INPUT_RELEASE}" ]]; then
