@@ -49,8 +49,8 @@ jobs:
         shell: bash
         run: |
           install -d -m 700 certificates
-          install -m 600 /home/test/workspace/embedded-linux-ota-platform/certificates/mender.crt
-          install -m 600 /home/test/workspace/embedded-linux-ota-platform/certificates/secrets.conf
+          install -m 600 /home/test/workspace/embedded-linux-ota-platform/certificates/mender.crt certificates/mender.crt
+          install -m 600 /home/test/workspace/embedded-linux-ota-platform/certificates/secrets.conf certificates/secrets.conf
 
           openssl x509             -in certificates/mender.crt             -noout             -subject             -issuer             -dates
 
