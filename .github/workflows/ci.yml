@@ -87,6 +87,15 @@ jobs:
           fetch-depth: 0
           clean: true
 
+      - name: Restore local certificates
+        shell: bash
+        run: |
+          cp /home/test/workspace/embedded-linux-ota-platform/certificates/mender.crt \
+             certificates/
+
+          cp /home/test/workspace/embedded-linux-ota-platform/certificates/secrets.conf \
+             certificates/
+
       - name: Build and verify image
         shell: bash
         run: |
