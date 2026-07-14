@@ -32,7 +32,7 @@ The complete GitHub Actions workflow is described in
 [docs/cicd-workflow.md](docs/cicd-workflow.md).
 
 <p align="center">
-  <img src="docs/images/cicd-workflow.svg" width="900">
+  <img src="docs/images/cicd-architecture.svg" width="900">
 </p>
 
 ## Features
