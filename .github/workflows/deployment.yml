@@ -36,9 +36,6 @@ jobs:
     timeout-minutes: 360
     environment: ota-test
 
-    env:
-      OTA_SECRETS_DIR: ${{ vars.OTA_SECRETS_DIR }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -51,15 +48,9 @@ jobs:
       - name: Restore local certificate and credentials
         shell: bash
         run: |
-          set -euo pipefail
-          : "${OTA_SECRETS_DIR:?Define OTA_SECRETS_DIR in GitHub variables}"
-
-          test -f "${OTA_SECRETS_DIR}/mender.crt"
-          test -f "${OTA_SECRETS_DIR}/secrets.conf"
-
           install -d -m 700 certificates
-          install -m 600 "${OTA_SECRETS_DIR}/mender.crt" certificates/mender.crt
-          install -m 600 "${OTA_SECRETS_DIR}/secrets.conf" certificates/secrets.conf
+          install -m 600 /home/test/workspace/embedded-linux-ota-platform/certificates/mender.crt
+          install -m 600 /home/test/workspace/embedded-linux-ota-platform/certificates/secrets.conf
 
           openssl x509             -in certificates/mender.crt             -noout             -subject             -issuer             -dates
 
