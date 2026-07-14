@@ -230,6 +230,7 @@ YOCTO_IMAGE = "$(bitbake_escape "${YOCTO_IMAGE}")"
 
 # Mender server
 PROJECT_MENDER_SERVER_URL = "$(bitbake_escape "${MENDER_SERVER_URL}")"
+PROJECT_MENDER_SERVER_HOST = "$(bitbake_escape "${MENDER_SERVER_HOST}")"
 PROJECT_MENDER_SERVER_HOST_IP = "$(bitbake_escape "${MENDER_SERVER_HOST_IP}")"
 PROJECT_MENDER_SERVER_CRT = "$(bitbake_escape "${MENDER_SERVER_CRT}")"
 
