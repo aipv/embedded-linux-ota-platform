@@ -3,6 +3,7 @@ name: Deployment Branch OTA Test
 on:
   push:
     branches:
+      - device_test
       - deployment
   workflow_dispatch:
     inputs:
