@@ -1,0 +1,5 @@
+Project    : Yocto Raspberry Pi Mender Demo
+Image      : rpi-demo-base-image
+Version    : Release-1.0
+Build Time :
+Comment    : First Image Version
