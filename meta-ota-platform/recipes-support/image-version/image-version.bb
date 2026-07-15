@@ -6,9 +6,9 @@ LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda
 do_install() {
     install -d ${D}${sysconfdir}
 
-    echo "Project    : ${IMAGE_PROJECT}" > ${D}${sysconfdir}/image-version
-    echo "Image      : ${IMAGE_BASENAME}" >> ${D}${sysconfdir}/image-version
-    echo "Version    : ${IMAGE_RELEASE}" >> ${D}${sysconfdir}/image-version
+    echo "Project    : ${PROJECT_NAME}" > ${D}${sysconfdir}/image-version
+    echo "Image      : ${YOCTO_IMAGE}" >> ${D}${sysconfdir}/image-version
+    echo "Release    : ${IMAGE_RELEASE}" >> ${D}${sysconfdir}/image-version
     echo "Build ID   : ${IMAGE_BUILD_ID}" >> ${D}${sysconfdir}/image-version
     echo "Comment    : ${IMAGE_COMMENT}" >> ${D}${sysconfdir}/image-version
     echo "Artifact   : ${MENDER_ARTIFACT_NAME}" >> ${D}${sysconfdir}/image-version
