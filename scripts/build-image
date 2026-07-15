@@ -34,6 +34,7 @@ set -euo pipefail
 
 RELEASE="dev"
 BUILD_ID=""
+COMMENT="build-image"
 
 # ---------------------------------------------------------------------------
 # Helper functions
@@ -49,13 +50,14 @@ Options:
   -r <release>     Set IMAGE_RELEASE. Default: dev
   -b <build_id>    Set IMAGE_BUILD_ID.
                    Default: current UTC time in YYYYMMDDHHMMSS format
+  -m <message>     Set COMMENT to the build
   -h               Show this help
 
 Examples:
   $(basename "$0")
   $(basename "$0") -r prod
   $(basename "$0") -b v1.0.0
-  $(basename "$0") -r prod -b v1.0.0
+  $(basename "$0") -r prod -b v1.0.0 -m my_comment
 EOF
 }
 
@@ -106,13 +108,16 @@ validate_name_component() {
 # Parse command-line options
 # ---------------------------------------------------------------------------
 
-while getopts ":r:b:h" option; do
+while getopts ":r:b:m:h" option; do
     case "${option}" in
         r)
             RELEASE="${OPTARG}"
             ;;
         b)
             BUILD_ID="${OPTARG}"
+            ;;
+        m)
+            COMMENT="${OPTARG}"
             ;;
         h)
             usage
@@ -184,10 +189,12 @@ validate_name_component IMAGE_BUILD_ID "${BUILD_ID}"
 
 IMAGE_RELEASE="${RELEASE}"
 IMAGE_BUILD_ID="${BUILD_ID}"
+IMAGE_COMMENT="${COMMENT}"
 MENDER_ARTIFACT_NAME="${PROJECT_NAME}-${IMAGE_RELEASE}-${IMAGE_BUILD_ID}"
 
 export IMAGE_RELEASE
 export IMAGE_BUILD_ID
+export IMAGE_COMMENT
 export MENDER_ARTIFACT_NAME
 
 # ---------------------------------------------------------------------------
@@ -237,6 +244,7 @@ PROJECT_MENDER_SERVER_CRT = "$(bitbake_escape "${MENDER_SERVER_CRT}")"
 # Dynamic build information
 IMAGE_RELEASE = "$(bitbake_escape "${IMAGE_RELEASE}")"
 IMAGE_BUILD_ID = "$(bitbake_escape "${IMAGE_BUILD_ID}")"
+IMAGE_COMMENT = "$(bitbake_escape "${IMAGE_COMMENT}")"
 MENDER_ARTIFACT_NAME = "$(bitbake_escape "${MENDER_ARTIFACT_NAME}")"
 EOF
 
@@ -255,6 +263,7 @@ printf "  %-24s %s\n" "YOCTO_MACHINE:" "${YOCTO_MACHINE}"
 printf "  %-24s %s\n" "YOCTO_IMAGE:" "${YOCTO_IMAGE}"
 printf "  %-24s %s\n" "IMAGE_RELEASE:" "${IMAGE_RELEASE}"
 printf "  %-24s %s\n" "IMAGE_BUILD_ID:" "${IMAGE_BUILD_ID}"
+printf "  %-24s %s\n" "IMAGE_COMMENT:" "${IMAGE_COMMENT}"
 printf "  %-24s %s\n" "MENDER_ARTIFACT_NAME:" "${MENDER_ARTIFACT_NAME}"
 printf "  %-24s %s\n" "PROJECT_INC:" "${PROJECT_INC}"
 echo
