@@ -5,12 +5,14 @@
 PROJECT_NAME ?= "embedded-linux-ota-platform"
 
 MACHINE ?= "raspberrypi3-64"
-YOCTO_IMAGE ?= "ota-platform-minimal-image"
+YOCTO_IMAGE ?= "ota-platform-default-image"
 
 PROJECT_MENDER_SERVER_URL ?= "https://docker.mender.io"
-PROJECT_MENDER_SERVER_HOST_IP ?= "192.168.0.88"
+PROJECT_MENDER_SERVER_HOST ?= "docker.mender.io"
+PROJECT_MENDER_SERVER_HOST_IP ?= ""
 PROJECT_MENDER_SERVER_CRT ?= "${TOPDIR}/../certificates/mender.crt"
 
 IMAGE_RELEASE ?= "dev"
 IMAGE_BUILD_ID ?= "manual"
+IMAGE_COMENT ?= "bitbake-build"
 MENDER_ARTIFACT_NAME ?= "${PROJECT_NAME}-${IMAGE_RELEASE}-${IMAGE_BUILD_ID}"
