@@ -11,6 +11,9 @@ require conf/features/raspberrypi.inc
 # Enable Mender OTA support
 require conf/features/mender.inc
 
+# Enable Docker support
+require conf/features/docker.inc
+
 # Enable Project Configuration
 require conf/project.inc
 
