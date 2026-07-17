@@ -8,3 +8,5 @@ IMAGE_INSTALL:append = " \
     image-version \
     tcp-echo-server \
 "
+
+IMAGE_INSTALL:append = " packagegroup-ota-platform-tools"

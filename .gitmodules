@@ -18,3 +18,7 @@
 	path = ext/meta-mender-community
 	url = https://github.com/mendersoftware/meta-mender-community.git
 	branch = scarthgap
+[submodule "ext/meta-virtualization"]
+	path = ext/meta-virtualization
+	url = https://git.yoctoproject.org/meta-virtualization
+	branch = scarthgap
