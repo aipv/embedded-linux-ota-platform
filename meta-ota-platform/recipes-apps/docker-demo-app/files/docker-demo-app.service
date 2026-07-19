@@ -1,0 +1,13 @@
+[Unit]
+Description=Docker Demo Application
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/docker-demo-app-start
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
