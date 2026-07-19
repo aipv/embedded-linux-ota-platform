@@ -7,6 +7,7 @@ IMAGE_INSTALL:append = " \
     systemd-analyze \
     image-version \
     tcp-echo-server \
+    docker-demo-app \
 "
 
 IMAGE_INSTALL:append = " packagegroup-ota-platform-tools"
